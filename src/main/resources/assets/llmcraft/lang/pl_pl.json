@@ -1,0 +1,8 @@
+{
+  "key.category.llmcraft.main": "LLMCraft (AI)",
+  "key.llmcraft.prompt": "Rozmawiaj z AI",
+  "key.llmcraft.stop": "Zatrzymaj AI (awaryjnie)",
+  "key.llmcraft.approve": "Zatwierdź akcję AI",
+  "key.llmcraft.deny": "Odrzuć akcję AI",
+  "llmcraft.config.title": "LLMCraft"
+}

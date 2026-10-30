@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.silverx.llmcraft.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "KeyMappingAccessor",
+    "KeyboardHandlerInvoker"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "llmcraft",
+  "version": "${version}",
+  "name": "LLMCraft",
+  "description": "Connects any LLM (Ollama, OpenAI-compatible APIs, Anthropic Claude, ...) to your Minecraft client: it reads chat, world, screens and logs, and can chat, run commands, use other mods and control the player - each ability individually permissioned. Global instructions plus per-world/server memory, history and context.",
+  "authors": ["SilverX"],
+  "contact": {},
+  "license": "MIT",
+  "icon": "assets/llmcraft/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.silverx.llmcraft.LlmCraft"],
+    "modmenu": ["dev.silverx.llmcraft.compat.ModMenuIntegration"]
+  },
+  "mixins": ["llmcraft.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.17.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "modmenu": "*",
+    "cloth-config": "*",
+    "baritone": "*"
+  }
+}

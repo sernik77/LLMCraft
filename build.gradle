@@ -1,0 +1,86 @@
+plugins {
+    id 'fabric-loom' version "${loom_version}"
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    maven { name = 'TerraformersMC'; url = 'https://maven.terraformersmc.com/releases/' }
+    maven { name = 'Shedaniel'; url = 'https://maven.shedaniel.me/' }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    // Optional: config screen inside Mod Menu (only used when both are installed)
+    modCompileOnly("com.terraformersmc:modmenu:${project.modmenu_version}") { transitive = false }
+    modCompileOnly("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
+        exclude(group: 'net.fabricmc.fabric-api')
+    }
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testImplementation 'org.junit.jupiter:junit-jupiter-params:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_version', project.minecraft_version
+    inputs.property 'loader_version', project.loader_version
+    filteringCharset = 'UTF-8'
+
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version,
+                'minecraft_version': project.minecraft_version,
+                'loader_version': project.loader_version
+    }
+}
+
+def targetJavaVersion = 21
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = 'UTF-8'
+    it.options.release.set(targetJavaVersion)
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+test {
+    useJUnitPlatform()
+}
+
+jar {
+    from('LICENSE') {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+}
+
+test {
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+    }
+}
+
+// In-game runtime tests: ./gradlew runClientGameTest (opens a Minecraft window)
+fabricApi {
+    configureTests {
+        createSourceSet = true
+        modId = "llmcraft-gametest"
+        enableGameTests = false
+        enableClientGameTests = true
+        eula = true
+    }
+}

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "llmcraft-gametest",
+  "version": "1.0.0",
+  "name": "LLMCraft runtime tests",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-client-gametest": ["dev.silverx.llmcraft.gametest.LlmCraftClientGameTest"]
+  },
+  "depends": { "llmcraft": "*" }
+}
