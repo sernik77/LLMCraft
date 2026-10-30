@@ -160,8 +160,14 @@ public final class ChatTools {
 
     static List<String> installedPrefixes(LlmConfig cfg) {
         List<String> out = new ArrayList<>();
-        cfg.modChatPrefixes.forEach((prefix, modId) -> {
-            if (prefix != null && !prefix.isEmpty() && modId != null && FabricLoader.getInstance().isModLoaded(modId)) out.add(prefix);
+        cfg.modChatPrefixes.forEach((prefix, modIds) -> {
+            if (prefix == null || prefix.isEmpty() || modIds == null) return;
+            for (String id : modIds.split(",")) {
+                if (FabricLoader.getInstance().isModLoaded(id.trim())) {
+                    out.add(prefix);
+                    return;
+                }
+            }
         });
         return out;
     }

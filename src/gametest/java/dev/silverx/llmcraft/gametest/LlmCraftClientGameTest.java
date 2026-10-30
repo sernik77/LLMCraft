@@ -120,9 +120,77 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
             boolean leaked = ChatLog.recent(30, false).stream().anyMatch(l -> l.kind() == ChatLog.Kind.SELF && l.text().trim().endsWith("@ai"));
             assertTrue(!leaked, "@ai prefix leaked to the server");
 
+            // ---- world-changing control tools (server gives items / spawns a target) ----
+            sp.getServer().runCommand("give Player0 minecraft:dirt 16");
+            sp.getServer().runCommand("gamerule doMobSpawning false");
+            ctx.waitTicks(5);
+            int[] p0 = ctx.computeOnClient(mc -> new int[]{mc.player.getBlockX(), mc.player.getBlockY(), mc.player.getBlockZ()});
+            String target = "{\"x\":" + (p0[0] + 1) + ",\"y\":" + (p0[1] - 1) + ",\"z\":" + p0[2] + "}";
+            check(ctx, "mine_block", target, "broken");
+            assertTrue(ctx.computeOnClient(mc -> mc.level.getBlockState(new net.minecraft.core.BlockPos(p0[0] + 1, p0[1] - 1, p0[2])).isAir()), "mine_block left the block");
+            int dirtSlot = ctx.computeOnClient(mc -> {
+                var inv = mc.player.getInventory();
+                for (int i = 0; i < 9; i++) if (inv.getItem(i).is(net.minecraft.world.item.Items.DIRT)) return i;
+                return -1;
+            });
+            assertTrue(dirtSlot >= 0, "dirt was not given");
+            check(ctx, "select_slot", "{\"slot\":" + dirtSlot + "}", "dirt");
+            check(ctx, "place_block", target, "Dirt");
+            check(ctx, "walk_to", "{\"x\":" + (p0[0] + 5.5) + ",\"z\":" + (p0[2] + 0.5) + "}", "arrived");
+            sp.getServer().runCommand("summon minecraft:pig " + (p0[0] + 7) + " " + p0[1] + " " + p0[2] + " {NoAI:1b}");
+            ctx.waitTicks(10);
+            int pigId = ctx.computeOnClient(mc -> mc.level.getEntitiesOfClass(net.minecraft.world.entity.animal.pig.Pig.class, mc.player.getBoundingBox().inflate(6)).stream()
+                    .findFirst().map(net.minecraft.world.entity.Entity::getId).orElse(-1));
+            assertTrue(pigId >= 0, "pig not found");
+            check(ctx, "attack", "{\"entity_id\":" + pigId + "}", "hit");
+            ctx.waitTicks(5);
+            float pigHp = ctx.computeOnClient(mc -> ((net.minecraft.world.entity.LivingEntity) mc.level.getEntity(pigId)).getHealth());
+            assertTrue(pigHp < 10, "attack did not damage the pig (hp " + pigHp + ")");
+            check(ctx, "use_item", "{}", "right clicked");
+
             ctx.takeScreenshot("llmcraft-tools");
 
+            int toolChars = ctx.computeOnClient(mc -> {
+                int n = 0;
+                for (var t : Agent.offeredTools()) n += t.name().length() + t.description().length() + t.parameters().toString().length();
+                return n;
+            });
+            LlmCraft.LOGGER.info("[gametest] offered tool schemas: {} chars", toolChars);
+
             if (ollamaUp()) {
+                // ASK flow: approve through the same path a chat-button click takes.
+                ctx.runOnClient(mc -> {
+                    ConfigManager.get().singleplayerPermissions.put(Category.CHAT_SEND, PermissionMode.ASK);
+                    Agent.submit("Use the send_chat tool to say exactly: approval test ok", Agent.Source.USER);
+                });
+                ctx.waitFor(mc -> dev.silverx.llmcraft.agent.Approvals.pendingCount() > 0, 20 * 180);
+                ctx.runOnClient(mc -> mc.getConnection().sendUnattendedCommand("llm approve " + dev.silverx.llmcraft.agent.Approvals.latestId(), null));
+                ctx.waitFor(mc -> !Agent.busy(), 20 * 180);
+                ctx.waitTicks(10);
+                boolean approvedSent = ChatLog.recent(30, false).stream().anyMatch(l -> l.text().toLowerCase().contains("approval test ok"));
+                assertTrue(approvedSent, "approved send_chat did not reach the chat");
+
+                // Deny via the deny key path.
+                ctx.runOnClient(mc -> Agent.submit("Use the send_chat tool to say exactly: denied test", Agent.Source.USER));
+                ctx.waitFor(mc -> dev.silverx.llmcraft.agent.Approvals.pendingCount() > 0, 20 * 180);
+                ctx.runOnClient(mc -> dev.silverx.llmcraft.agent.Approvals.denyLatest());
+                ctx.waitFor(mc -> !Agent.busy(), 20 * 180);
+                ctx.waitTicks(10);
+                boolean deniedSent = ChatLog.recent(30, false).stream().anyMatch(l -> l.text().toLowerCase().contains("denied test"));
+                assertTrue(!deniedSent, "denied send_chat was sent anyway");
+                String deniedHistory = ctx.computeOnClient(mc -> Stores.current().history().getLast().text);
+                LlmCraft.LOGGER.info("[gametest] after deny: {}", deniedHistory);
+                assertTrue(deniedHistory.contains("denied"), "denial not recorded: " + deniedHistory);
+                ctx.runOnClient(mc -> ConfigManager.get().singleplayerPermissions.put(Category.CHAT_SEND, PermissionMode.ALLOW));
+
+                // Long history must still fit the default context window.
+                ctx.runOnClient(mc -> {
+                    var w = Stores.current();
+                    for (int i = 0; i < 38; i++) {
+                        w.addHistory(new HistoryEntry(i % 2 == 0 ? "user" : "assistant",
+                                "Turn " + i + ": we talked about building a big oak house near the river at 120 70 -340, gathering iron and planning a nether portal. ".repeat(3)));
+                    }
+                });
                 int before = ctx.computeOnClient(mc -> Stores.current().history().size());
                 ctx.runOnClient(mc -> Agent.submit("Call the player_status tool, then tell me my exact current health as a number.", Agent.Source.USER));
                 ctx.waitFor(mc -> !Agent.busy(), 20 * 300);
@@ -130,6 +198,10 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
                 assertTrue(h.size() >= before + 2, "agent did not record history");
                 String answer = h.getLast().text;
                 LlmCraft.LOGGER.info("[gametest] agent answer: {}", answer);
+                int promptTokens = Agent.lastPromptTokens();
+                int ctxTokens = ctx.computeOnClient(mc -> ConfigManager.get().activeProfile().contextTokens);
+                LlmCraft.LOGGER.info("[gametest] prompt tokens {} / context {}", promptTokens, ctxTokens);
+                assertTrue(promptTokens > 0 && promptTokens < ctxTokens, "prompt does not fit the context window: " + promptTokens + " / " + ctxTokens);
                 assertTrue(answer.contains("player_status"), "agent did not use player_status: " + answer);
                 assertTrue(answer.matches("(?s).*\\b20(\\.0)?\\b.*"), "agent answer lacks the health value 20: " + answer);
                 ctx.takeScreenshot("llmcraft-agent");

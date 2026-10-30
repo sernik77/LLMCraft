@@ -95,6 +95,12 @@ public final class Approvals {
         PENDING.clear();
     }
 
+    public static synchronized String latestId() {
+        String last = null;
+        for (String k : PENDING.keySet()) last = k;
+        return last;
+    }
+
     public static synchronized int pendingCount() {
         return PENDING.size();
     }

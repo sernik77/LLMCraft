@@ -25,8 +25,11 @@ public final class LlmConfig {
             "^(execute\\b.*\\b)?kill @[ae].*"));
     /** Server commands matching these run without asking even when COMMANDS is ASK. */
     public List<String> commandAutoAllowPatterns = new ArrayList<>(List.of("^(help|list|seed|time query .*)$"));
-    /** Chat prefixes that other client mods intercept. Only used when the named mod is loaded, so nothing leaks to public chat. */
-    public Map<String, String> modChatPrefixes = new LinkedHashMap<>(Map.of(".", "meteor-client", "#", "baritone"));
+    /**
+     * Chat prefixes that other client mods intercept, mapped to the mod id(s) (comma separated) that handle them.
+     * A prefix is only usable while one of those mods is loaded, so nothing leaks to public chat.
+     */
+    public Map<String, String> modChatPrefixes = new LinkedHashMap<>(Map.of(".", "meteor-client", "#", "baritone,baritone-meteor"));
     /** Seconds an ASK approval waits before it is treated as denied. */
     public int approvalTimeoutSeconds = 60;
 
@@ -167,6 +170,8 @@ public final class LlmConfig {
         List<ProviderProfile> list = new ArrayList<>();
         ProviderProfile ollama = ProviderProfile.of("ollama", ProviderProfile.Type.OLLAMA, "http://localhost:11434", "", "qwen3.5:4b");
         ollama.vision = true;
+        // ~45 tool schemas alone take ~4k tokens; 16k leaves room for history and tool results.
+        ollama.contextTokens = 16384;
         ollama.extraBody.addProperty("keep_alive", "30m");
         list.add(ollama);
 
@@ -192,6 +197,7 @@ public final class LlmConfig {
         list.add(gemini);
 
         ProviderProfile lmstudio = ProviderProfile.of("lmstudio", ProviderProfile.Type.OPENAI, "http://localhost:1234/v1", "", "local-model");
+        lmstudio.contextTokens = 16384;
         list.add(lmstudio);
         return list;
     }

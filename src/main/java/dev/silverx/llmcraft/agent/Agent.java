@@ -113,6 +113,7 @@ public final class Agent {
         volatile boolean cancelled;
         volatile boolean usedBaritone;
         int step;
+        int toolChars;
         LlmConfig cfg;
         WorldStore world;
         ProviderProfile profile;
@@ -148,13 +149,20 @@ public final class Agent {
                 toolCtx = new ToolContext(cfg, world, profile);
 
                 String system = PromptBuilder.systemPrompt(cfg, world);
-                request.messages.add(Message.system(system));
-                request.messages.addAll(PromptBuilder.history(world, profile.contextTokens, system.length()));
-                request.messages.add(Message.user(input));
                 if (profile.toolMode != ProviderProfile.ToolMode.NONE) {
                     for (Tool t : ToolRegistry.all()) {
                         if (Permissions.offered(t, world) && t.available.test(toolCtx)) request.tools.add(t.spec());
                     }
+                }
+                toolChars = toolChars(request.tools);
+                request.messages.add(Message.system(system));
+                request.messages.addAll(PromptBuilder.history(world, profile.contextTokens, system.length(), toolChars, profile.maxTokens));
+                request.messages.add(Message.user(input));
+                int needed = (system.length() + toolChars + input.length()) / PromptBuilder.CHARS_PER_TOKEN;
+                if (needed > profile.contextTokens * 0.9 && !warnedContext) {
+                    warnedContext = true;
+                    Output.error("Prompt (~" + needed + " tokens incl. " + request.tools.size() + " tools) is close to the context window of '"
+                            + profile.name + "' (" + profile.contextTokens + "). Raise contextTokens or turn off unused permission categories.");
                 }
                 if (source == Source.USER) Output.info("thinking… (" + profile.name + ")");
                 loop().orTimeout(cfg.agent.requestTimeoutSeconds, TimeUnit.SECONDS)
@@ -177,7 +185,9 @@ public final class Agent {
         CompletableFuture<Void> loop() {
             if (cancelled) return CompletableFuture.completedFuture(null);
             step++;
+            fitToContext();
             return provider.chat(request).thenCompose(resp -> {
+                if (resp.promptTokens >= 0) lastPromptTokens = resp.promptTokens;
                 if (cancelled) return CompletableFuture.completedFuture(null);
                 showResponse(resp);
                 request.messages.add(resp.toAssistantMessage());
@@ -253,6 +263,22 @@ public final class Agent {
             });
         }
 
+        /** Shrinks old tool results (and drops old screenshots) when the conversation outgrows the context window. */
+        void fitToContext() {
+            int limit = profile.contextTokens * PromptBuilder.CHARS_PER_TOKEN - toolChars - Math.max(1024, profile.maxTokens) * PromptBuilder.CHARS_PER_TOKEN;
+            int total = 0;
+            for (Message m : request.messages) total += m.textOrEmpty().length();
+            int lastTool = -1;
+            for (int i = 0; i < request.messages.size(); i++) if (request.messages.get(i).role == Message.Role.TOOL) lastTool = i;
+            for (int i = 0; i < request.messages.size() && total > limit; i++) {
+                Message m = request.messages.get(i);
+                if (m.role != Message.Role.TOOL || i == lastTool || m.textOrEmpty().length() <= 200) continue;
+                total -= m.text.length() - 120;
+                m.text = m.text.substring(0, 100) + "… (older result shortened to fit the context window)";
+                m.images.clear();
+            }
+        }
+
         private record Gate(String error, boolean ask, Category category, String summary) {}
 
         private Gate gate(Tool tool, JsonObject args) {
@@ -299,6 +325,20 @@ public final class Agent {
             String t = text.trim().toUpperCase();
             return t.equals("NOTHING") || t.equals("NOTHING.") || t.equals("[NOTHING]");
         }
+    }
+
+    private static boolean warnedContext;
+    private static volatile int lastPromptTokens = -1;
+
+    /** Prompt size reported by the provider for the most recent model call (-1 if unknown). */
+    public static int lastPromptTokens() {
+        return lastPromptTokens;
+    }
+
+    static int toolChars(List<ToolSpec> tools) {
+        int n = 0;
+        for (ToolSpec t : tools) n += t.name().length() + t.description().length() + t.parameters().toString().length() + 40;
+        return n;
     }
 
     static String abbreviate(String s, int max) {

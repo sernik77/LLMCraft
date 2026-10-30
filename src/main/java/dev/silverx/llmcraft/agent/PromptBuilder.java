@@ -80,10 +80,18 @@ final class PromptBuilder {
         return sb.toString();
     }
 
-    /** History turns that fit in roughly half of the context window, newest kept. */
-    static List<Message> history(WorldStore world, int contextTokens, int systemChars) {
+    /** Rough chars-per-token used for budgeting (conservative for mixed languages/JSON). */
+    static final int CHARS_PER_TOKEN = 3;
+
+    /**
+     * History turns that fit in what is left of the context window after the system prompt, the tool
+     * schemas and a reserve for the reply and tool results. Newest turns are kept.
+     */
+    static List<Message> history(WorldStore world, int contextTokens, int systemChars, int toolChars, int maxOutputTokens) {
+        int reserve = Math.max(1024, maxOutputTokens) * CHARS_PER_TOKEN + 6000;
+        int budgetChars = contextTokens * CHARS_PER_TOKEN - systemChars - toolChars - reserve;
+        if (budgetChars <= 0) return new ArrayList<>();
         List<HistoryEntry> all = world.history();
-        int budgetChars = Math.max(2000, contextTokens * 4 / 2 - systemChars / 2);
         List<Message> out = new ArrayList<>();
         int used = 0;
         for (int i = all.size() - 1; i >= 0; i--) {

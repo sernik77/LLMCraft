@@ -5,7 +5,7 @@ LLMCraft podłącza dowolny model językowy do klienta gry: model czyta czat, ś
 - **Dowolne źródło AI**: Ollama (natywnie), każde API zgodne z OpenAI (OpenAI, OpenRouter, Groq, LM Studio, llama.cpp, vLLM, DeepSeek, Mistral, Gemini, Ollama `/v1`…), Anthropic Claude. Wiele profili, przełączanie w locie.
 - **Modele bez function calling** też działają (tryb `JSON`), a modele z vision dostają zrzuty ekranu.
 - **Globalne instrukcje** + **pamięć, historia i kontekst osobno dla każdego świata/serwera** (z automatycznym streszczaniem starej historii).
-- **Integracja z innymi modami**: komendy klienckie, komendy „prefiksowe” (Meteor `.`, Baritone `#`), dowolne keybindy, symulacja fizycznych klawiszy, GUI innych modów, ich pliki konfiguracyjne, Baritone przez API.
+- **Integracja z innymi modami**: komendy klienckie, komendy „prefiksowe” (Meteor `.`, Baritone `#` — także `baritone-meteor`), dowolne keybindy, symulacja fizycznych klawiszy, GUI innych modów, ich pliki konfiguracyjne, Baritone przez API.
 
 ## Wymagania i instalacja
 
@@ -59,6 +59,8 @@ Profile są w `config.json` → `profiles`, aktywny w `activeProfile` (`/llm pro
 | Gemini | `OPENAI` | `https://generativelanguage.googleapis.com/v1beta/openai` | |
 | LM Studio | `OPENAI` | `http://localhost:1234/v1` | |
 | llama.cpp / vLLM | `OPENAI` | `http://host:port/v1` | |
+
+> **Okno kontekstu**: same schematy ~45 narzędzi to ok. 4 tys. tokenów. Dla modeli lokalnych domyślnie `contextTokens: 16384` (Ollama dostaje to jako `num_ctx`; więcej kontekstu = więcej VRAM). Przy 8192 historia rozmowy praktycznie się nie zmieści — mod przytnie ją automatycznie i ostrzeże w czacie. Wyłączenie nieużywanych kategorii uprawnień (`OFF`) zmniejsza liczbę wysyłanych narzędzi.
 
 Pola profilu: `model`, `temperature`, `maxTokens`, `contextTokens` (budżet historii; dla Ollamy też `num_ctx`), `toolMode` (`NATIVE` / `JSON` / `NONE`), `vision`, `timeoutSeconds`, `headers`, `extraBody` (dowolne pola doklejane do zapytania).
 
