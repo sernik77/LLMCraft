@@ -14,6 +14,7 @@ import dev.silverx.llmcraft.tool.Tool;
 import dev.silverx.llmcraft.tool.ToolRegistry;
 import dev.silverx.llmcraft.tool.ToolResult;
 import dev.silverx.llmcraft.tool.impl.ChatTools;
+import dev.silverx.llmcraft.tool.impl.ModTools;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -82,6 +83,7 @@ public final class JsMacrosTool {
         switch (action) {
             case "read", "run", "enable", "disable" -> {
                 if (Args.str(a, "file", "").isBlank()) return "file is required";
+                if (ModTools.secretName(Args.str(a, "file", ""))) return "this file is private (its name looks like it holds credentials)";
             }
             case "stop" -> {
                 if (Args.str(a, "file", "").isBlank()) return "file is required (or 'all')";
@@ -202,6 +204,7 @@ public final class JsMacrosTool {
         sb.append("Macros (profile ").append(core.profile.getCurrentProfileName()).append("):\n");
         if (triggers.isEmpty()) sb.append("  none\n");
         for (ScriptTrigger t : triggers) {
+            if (ModTools.secretName(t.getScriptFile())) continue;
             String kind = t.triggerType == ScriptTrigger.TriggerType.EVENT ? "on event " + t.event : "on key " + t.event + " (" + t.triggerType.name().toLowerCase(Locale.ROOT) + ")";
             sb.append("  ").append(t.getScriptFile()).append(" - ").append(kind).append(t.enabled ? "" : " [disabled]").append('\n');
         }
@@ -217,6 +220,7 @@ public final class JsMacrosTool {
             try (Stream<Path> st = Files.walk(root, 5)) {
                 st.filter(Files::isRegularFile).map(p -> root.relativize(p).toString().replace('\\', '/'))
                         .filter(p -> !p.startsWith(".") && !p.contains("/.") && !p.contains("node_modules/") && !p.startsWith("llmcraft-inline."))
+                        .filter(p -> !ModTools.secretName(p))
                         .sorted().limit(150).forEach(files::add);
             }
         }

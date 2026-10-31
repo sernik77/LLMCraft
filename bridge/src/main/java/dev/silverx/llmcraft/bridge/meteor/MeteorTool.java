@@ -52,12 +52,7 @@ public final class MeteorTool {
                 .param("text", "string", "Command text without the prefix (command)", false)
                 .param("filter", "string", "Optional filter (modules/commands)", false)
                 .alsoOfferedUnder(Category.MODS)
-                .categoryFor((ctx, a) -> {
-                    String action = Args.str(a, "action", "");
-                    if (READ_ONLY.contains(action)) return Category.MODS;
-                    if (action.equals("command") && root(Args.str(a, "text", "")).equals("say")) return Category.CHAT_SEND;
-                    return Category.CLIENT_COMMANDS;
-                })
+                .categoryFor((ctx, a) -> READ_ONLY.contains(Args.str(a, "action", "")) ? Category.MODS : Category.CLIENT_COMMANDS)
                 .summary(MeteorTool::summary)
                 .deny((ctx, a) -> deny(a))
                 .async((ctx, a) -> run(a))
@@ -84,6 +79,8 @@ public final class MeteorTool {
                 if (text.isBlank()) return "text is required";
                 String root = root(text);
                 if (SELF.contains(root)) return "the AI cannot run its own .ai/.llm commands";
+                // .say sends a raw chat packet, past send_chat's rate limit, sanitizing and message budget.
+                if (root.equals("say")) return "use send_chat for public chat messages";
                 for (String b : cfg.blockedCommands) if (b.equalsIgnoreCase(root)) return "Meteor command '" + root + "' is blocked in bridge.json (meteor.blockedCommands)";
                 if (root.equals("toggle") || root.equals("t") || root.equals("settings") || root.equals("s")) {
                     // Same rules as the module actions.

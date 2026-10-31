@@ -194,8 +194,8 @@ Osobny mod (`bridge/`, jar `llmcraft-bridge-1.0.0.jar`), wymaga LLMCraft ≥ 1.4
 - `modules` (lista; `filter` = słowo, kategoria albo `active`), `info` (opis i wszystkie ustawienia z wartościami i dozwolonymi wartościami),
 - `enable` / `disable` / `toggle`, `set` (moduł + ustawienie + wartość w formacie Meteora), `reset` (ustawienie do domyślnego),
 - `commands` (lista komend; `filter` = nazwa komendy → pełna składnia), `command` (dowolna komenda Meteora bez prefiksu: `friends add Steve`, `macro <nazwa>`, `waypoint list`…; błędna składnia zwraca użycie).
-- Uprawnienia: odczyt (`modules`, `info`, `commands`) = `mods`; zmiany = `client_commands` (domyślnie ASK); `.say` liczy się jako `chat_send`. Moduły w multiplayerze to ryzyko anticheatu — zostaw ASK.
-- Zawsze zablokowane: `.reset` i `.swarm` (lista w `bridge.json`), `toggle all`, własne `.ai`/`.llm`. Moduły, których AI ma nie ruszać: `meteor.blockedModules`.
+- Uprawnienia: odczyt (`modules`, `info`, `commands`) = `mods`; zmiany = `client_commands` (domyślnie ASK). Moduły w multiplayerze to ryzyko anticheatu — zostaw ASK.
+- Zawsze zablokowane: `.reset` i `.swarm` (lista w `bridge.json`), `toggle all`, własne `.ai`/`.llm` oraz `.say` (wysyła surowy pakiet czatu z pominięciem limitów `send_chat` — model ma używać `send_chat`; to samo dotyczy `mod_chat_command`). Moduły, których AI ma nie ruszać: `meteor.blockedModules`.
 
 **Meteor → AI**:
 - `.ai <wiadomość>` (= `/ai`), `.llm <…>` (= `/llm`: `.llm stop`, `.llm perms`, `.llm profile claude`…).
@@ -204,7 +204,7 @@ Osobny mod (`bridge/`, jar `llmcraft-bridge-1.0.0.jar`), wymaga LLMCraft ≥ 1.4
 
 ### JsMacros CE
 **AI → makra** — narzędzie `jsmacros`:
-- `list` (makra z klawiszem/zdarzeniem, serwisy, pliki skryptów, uruchomione skrypty), `read` (kod skryptu — model sprawdza, co makro robi),
+- `list` (makra z klawiszem/zdarzeniem, serwisy, pliki skryptów, uruchomione skrypty), `read` (kod skryptu — model sprawdza, co makro robi; pliki o nazwach typu *token/account/secret* są ukryte, jak w `read_config_file`),
 - `run` (uruchamia skrypt z folderu makr i czeka; skrypt dostaje `args`, oddaje wynik przez `LLM.setResult(x)`; model widzi wynik, błąd i wszystko, co skrypt wypisał przez `Chat.log`), `running`, `stop` (`all` = wszystkie uruchomione przez AI),
 - `event` (odpala własne zdarzenie, czyli makra do niego przypięte; wbudowanych zdarzeń JsMacros nie da się podrobić), `enable` / `disable` (makro po pliku), `service_start` / `service_stop` / `service_restart`.
 - Uprawnienia: odczyt = `mods`, reszta = nowa kategoria `scripts` (domyślnie ASK). **End / `/llm stop` zabija też skrypty uruchomione przez AI.**

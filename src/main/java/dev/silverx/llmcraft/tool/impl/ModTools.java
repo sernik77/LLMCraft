@@ -228,6 +228,11 @@ public final class ModTools {
         return null;
     }
 
+    /** File names that look like they hold credentials (tokens, accounts, keys): never shown to the model. */
+    public static boolean secretName(String path) {
+        return SECRET_FILE.matcher(path.toLowerCase(Locale.ROOT)).matches();
+    }
+
     static boolean hidden(String relPath) {
         String lower = relPath.toLowerCase(Locale.ROOT);
         if (lower.startsWith(ConfigManager.dir().getFileName().toString() + "/config.json")) return true;

@@ -64,8 +64,10 @@ final class MeteorChecks {
         assertTrue(bad.error && bad.text.contains("usage"), "bad command should fail with usage: " + bad.text);
         assertTrue(deny(ctx, "meteor", "{\"action\":\"command\",\"text\":\"reset all\"}") != null, "reset must be blocked");
         assertTrue(deny(ctx, "meteor", "{\"action\":\"command\",\"text\":\"ai hi\"}") != null, ".ai must be blocked for the AI");
-        Category cat = ctx.computeOnClient(mc -> ToolRegistry.get("meteor").categoryFor(null, T.json("{\"action\":\"command\",\"text\":\"say hi\"}")));
-        assertTrue(cat == Category.CHAT_SEND, ".say must count as public chat, got " + cat);
+        assertTrue(deny(ctx, "meteor", "{\"action\":\"command\",\"text\":\"say @ai hi\"}") != null, ".say must be refused (send_chat instead)");
+        assertTrue(deny(ctx, "mod_chat_command", "{\"text\":\".say hi\"}") != null, ".say through mod_chat_command must be refused");
+        Category cat = ctx.computeOnClient(mc -> ToolRegistry.get("meteor").categoryFor(null, T.json("{\"action\":\"info\",\"module\":\"x\"}")));
+        assertTrue(cat == Category.MODS, "reading must count as mods, got " + cat);
 
         // .ai / .llm exist and .llm reaches LLMCraft's /llm.
         assertTrue(ctx.computeOnClient(mc -> Commands.get("ai") != null), ".ai missing");

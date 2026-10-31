@@ -39,7 +39,10 @@ final class JsMacrosChecks {
             reg.addScriptTrigger(new ScriptTrigger(ScriptTrigger.TriggerType.EVENT, "LLMTool", "llmtest_toolevt.js", true, false));
         });
 
+        write(dir.resolve("discord_token.txt"), "secret\n");
         check(ctx, "jsmacros", "{\"action\":\"list\"}", "llmtest_call.js");
+        assertTrue(!T.run(ctx, "jsmacros", "{\"action\":\"list\"}").text.contains("discord_token"), "secret-looking file names must be hidden");
+        assertTrue(deny(ctx, "jsmacros", "{\"action\":\"read\",\"file\":\"discord_token.txt\"}") != null, "secret-looking files must not be readable");
         check(ctx, "jsmacros", "{\"action\":\"read\",\"file\":\"llmtest_fail.js\"}", "boom");
         assertTrue(T.run(ctx, "jsmacros", "{\"action\":\"read\",\"file\":\"../../options.txt\"}").error, "path escape must fail");
 

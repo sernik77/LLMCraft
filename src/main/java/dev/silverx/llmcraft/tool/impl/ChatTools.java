@@ -117,7 +117,12 @@ public final class ChatTools {
                 .available(ctx -> !installedPrefixes(ctx.config).isEmpty())
                 .deny((ctx, a) -> {
                     String t = Args.str(a, "text", "");
-                    for (String p : installedPrefixes(ctx.config)) if (t.startsWith(p) && t.length() > p.length()) return null;
+                    for (String p : installedPrefixes(ctx.config)) {
+                        if (!t.startsWith(p) || t.length() <= p.length()) continue;
+                        // Meteor's .say sends a raw chat packet, past send_chat's limits.
+                        if (t.substring(p.length()).trim().toLowerCase(Locale.ROOT).matches("say(\\s.*)?")) return "use send_chat for public chat messages";
+                        return null;
+                    }
                     return "text must start with one of the installed mod prefixes " + installedPrefixes(ctx.config);
                 })
                 .async((ctx, a) -> {
