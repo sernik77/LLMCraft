@@ -72,6 +72,10 @@ public final class Snapshot {
         sb.append(String.format(Locale.ROOT, " | pos %.1f %.1f %.1f", p.getX(), p.getY(), p.getZ()));
         sb.append(" | holding ").append(stack(p.getMainHandItem()));
         if (BaritoneBridge.available()) sb.append(" | baritone ").append(BaritoneBridge.isBusy() ? "BUSY" : "idle");
+        String threats = Danger.summary(mc);
+        if (threats != null) sb.append(" | ").append(threats);
+        String stuck = Stuck.diagnose(mc);
+        if (stuck != null) sb.append(" | ").append(stuck);
         if (mc.screen != null) sb.append(" | screen ").append(screenName(mc.screen));
         return sb.toString();
     }

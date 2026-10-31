@@ -30,6 +30,21 @@ public final class Controller {
         default void onStop() {}
 
         String describe();
+
+        /** Fighting: keeps going when the player takes damage and suppresses the flee reflex (it retreats by itself). */
+        default boolean combat() {
+            return false;
+        }
+    }
+
+    public static boolean inCombat() {
+        for (Running r : TASKS) if (r.task.combat()) return true;
+        return false;
+    }
+
+    public static boolean has(Class<?> type) {
+        for (Running r : TASKS) if (type.isInstance(r.task)) return true;
+        return false;
     }
 
     private record Running(Task task, CompletableFuture<String> future, int timeoutTicks, int[] age) {}
@@ -156,7 +171,7 @@ public final class Controller {
             stopAll("player died");
             return;
         }
-        if (cfg.stopOnDamage && lastHealth >= 0 && mc.player.getHealth() < lastHealth) {
+        if (cfg.stopOnDamage && !inCombat() && lastHealth >= 0 && mc.player.getHealth() < lastHealth) {
             stopAll("took damage");
             Output.info("Stopped AI control: you took damage.");
             return;
@@ -257,12 +272,17 @@ public final class Controller {
                 if (dist <= tolerance) return String.format("arrived at %.1f %.1f %.1f", pos.x, pos.y, pos.z);
                 float yaw = (float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90f;
                 targetYaw = Mth.wrapDegrees(yaw);
+                String danger = Danger.aheadOf(mc, dx / dist, dz / dist);
+                if (danger != null) return String.format("stopped at %.1f %.1f %.1f: %s", pos.x, pos.y, pos.z, danger);
                 hold(mc.options.keyUp, 2);
                 if (sprint) hold(mc.options.keySprint, 2);
                 if (p.horizontalCollision && p.onGround()) hold(mc.options.keyJump, 2);
                 if (p.isInWater()) hold(mc.options.keyJump, 2);
                 if (lastPos != null && lastPos.distanceToSqr(pos) < 0.0004) {
-                    if (++stuck > 60) return String.format("stuck at %.1f %.1f %.1f, %.1f blocks from target", pos.x, pos.y, pos.z, dist);
+                    if (++stuck > 30) {
+                        String why = Stuck.diagnose(mc);
+                        return String.format("stuck at %.1f %.1f %.1f, %.1f blocks from target", pos.x, pos.y, pos.z, dist) + (why != null ? " (" + why + ")" : "");
+                    }
                 } else stuck = 0;
                 lastPos = pos;
                 return null;

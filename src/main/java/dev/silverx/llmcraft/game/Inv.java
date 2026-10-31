@@ -85,6 +85,14 @@ public final class Inv {
         return out;
     }
 
+    /** All items in the inventory added up (any change = something was picked up or used). */
+    public static int totalCount() {
+        var inv = mc().player.getInventory();
+        int n = 0;
+        for (int i = 0; i < inv.getContainerSize(); i++) n += inv.getItem(i).getCount();
+        return n;
+    }
+
     public static int count(Item item) {
         var p = mc().player;
         if (p == null) return 0;
@@ -323,6 +331,12 @@ public final class Inv {
             }
         });
         return s;
+    }
+
+    /** "zombie", "creeper" or a player's name. */
+    public static String entityName(net.minecraft.world.entity.Entity e) {
+        if (e instanceof net.minecraft.world.entity.player.Player pl) return "player " + pl.getGameProfile().name();
+        return BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath();
     }
 
     /** The item form of the block at a position (furnace, smoker...). */

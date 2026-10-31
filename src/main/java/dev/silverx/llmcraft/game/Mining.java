@@ -30,6 +30,12 @@ public final class Mining {
         BROKEN.merge(state.getBlock(), 1, Integer::sum);
     }
 
+    public static synchronized int totalBroken() {
+        int n = 0;
+        for (int v : BROKEN.values()) n += v;
+        return n;
+    }
+
     public static synchronized int broken(Set<Block> blocks) {
         int n = 0;
         for (Block b : blocks) n += BROKEN.getOrDefault(b, 0);
@@ -98,6 +104,7 @@ public final class Mining {
             int age;
             int idle;
             int lastProgress = progress == null ? 0 : progress.getAsInt();
+            Stuck.Progress tracker;
             long progressAt = started;
 
             @Override
@@ -120,6 +127,14 @@ public final class Mining {
                 if (noPath >= 5) {
                     BaritoneBridge.cancel();
                     return Script.FAILED + "Baritone cannot reach a target (it reported " + noPath + " path failures in a row)";
+                }
+                if (tracker == null) tracker = new Stuck.Progress(mc);
+                double still = tracker.idleSeconds(mc);
+                if (still >= Stuck.NO_PROGRESS_SECONDS) {
+                    BaritoneBridge.cancel();
+                    String why = Stuck.diagnose(mc);
+                    return Script.FAILED + "no progress for " + (int) still + " s (not moving, digging or collecting)" + (why != null ? " - " + why : "")
+                            + ". Stopped instead of waiting.";
                 }
                 idle = BaritoneBridge.isBusy() ? 0 : idle + 1;
                 return idle >= 40 ? "Baritone stopped on its own" : null;

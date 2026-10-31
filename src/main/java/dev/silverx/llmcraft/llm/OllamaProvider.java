@@ -114,6 +114,7 @@ public final class OllamaProvider implements LlmProvider {
         r.finishReason = HttpJson.str(json, "done_reason");
         r.promptTokens = HttpJson.integer(json, "prompt_eval_count", -1);
         r.completionTokens = HttpJson.integer(json, "eval_count", -1);
+        if (json.has("prompt_eval_duration")) r.promptMillis = json.get("prompt_eval_duration").getAsLong() / 1_000_000;
         r.text = ThinkTags.strip(r);
         return r;
     }

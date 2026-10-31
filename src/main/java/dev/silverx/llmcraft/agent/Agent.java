@@ -125,9 +125,22 @@ public final class Agent {
         ToolContext toolCtx;
         final ChatRequest request = new ChatRequest();
         final List<String> actionLog = new ArrayList<>();
+        /** Failures per exact call (tool + arguments), with where the player was and what they held then. */
+        final java.util.Map<String, int[]> failedCalls = new java.util.HashMap<>();
+        String failedAt = "";
         String lastTool;
         int sameToolStreak;
         int failStreak;
+        // ---- fresh context mode ----
+        boolean fresh;
+        String system;
+        final List<Message> base = new ArrayList<>();
+        final List<String> stepLog = new ArrayList<>();
+        final List<String> lastResults = new ArrayList<>();
+        final List<Message.Image> lastImages = new ArrayList<>();
+        String lastText = "";
+        String pinnedPlan;
+        volatile String notes = "";
         final StringBuilder shownText = new StringBuilder();
 
         Job(String input, Source source) {
@@ -161,16 +174,20 @@ public final class Agent {
                 provider = Providers.create(profile);
                 toolCtx = new ToolContext(cfg, world, profile);
 
-                String system = PromptBuilder.systemPrompt(cfg, world);
+                system = PromptBuilder.systemPrompt(cfg, world);
+                fresh = !"append".equalsIgnoreCase(cfg.agent.contextMode);
                 if (profile.toolMode != ProviderProfile.ToolMode.NONE) {
                     for (Tool t : ToolRegistry.all()) {
                         if (Permissions.offered(t, world) && t.available.test(toolCtx)) request.tools.add(t.spec());
                     }
                 }
                 toolChars = toolChars(request.tools);
-                request.messages.add(Message.system(system));
-                request.messages.addAll(PromptBuilder.history(world, profile.contextTokens, system.length(), toolChars, profile.maxTokens));
-                request.messages.add(Message.user(input));
+                base.add(Message.system(system));
+                base.addAll(PromptBuilder.history(world, profile.contextTokens, system.length(), toolChars, profile.maxTokens));
+                request.messages.addAll(base);
+                // The volatile part (state, chat) goes last so the cached prefix stays valid.
+                request.messages.add(Message.user(fresh ? workMessage(null) : input + "\n\n" + PromptBuilder.stateBlock(cfg, world)));
+                ACTIVE = this;
                 int needed = (system.length() + toolChars + input.length()) / PromptBuilder.CHARS_PER_TOKEN;
                 if (needed > profile.contextTokens * 0.9 && !warnedContext) {
                     warnedContext = true;
@@ -198,12 +215,18 @@ public final class Agent {
         CompletableFuture<Void> loop() {
             if (cancelled) return CompletableFuture.completedFuture(null);
             step++;
-            fitToContext();
-            return provider.chat(request).thenCompose(resp -> {
+            CompletableFuture<Void> prepared;
+            if (fresh && step > 1) prepared = ClientThread.call(() -> workMessage(null)).thenAccept(this::setWork);
+            else {
+                if (!fresh) fitToContext();
+                prepared = CompletableFuture.completedFuture(null);
+            }
+            return prepared.thenCompose(x -> provider.chat(request)).thenCompose(resp -> {
                 if (resp.promptTokens >= 0) lastPromptTokens = resp.promptTokens;
                 if (cancelled) return CompletableFuture.completedFuture(null);
                 showResponse(resp);
-                request.messages.add(resp.toAssistantMessage());
+                if (fresh) lastText = resp.text == null ? "" : resp.text.trim();
+                else request.messages.add(resp.toAssistantMessage());
                 if (!resp.hasToolCalls()) {
                     complete(resp.text);
                     return CompletableFuture.completedFuture(null);
@@ -211,20 +234,33 @@ public final class Agent {
                 if (step >= cfg.agent.maxSteps) return wrapUp(resp);
                 List<ToolCall> calls = resp.toolCalls;
                 if (calls.size() > cfg.agent.maxToolCallsPerStep) calls = calls.subList(0, cfg.agent.maxToolCallsPerStep);
+                lastResults.clear();
+                lastImages.clear();
                 CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
                 for (ToolCall call : calls) {
                     chain = chain.thenCompose(v -> cancelled ? CompletableFuture.completedFuture(null) : execute(call).thenAccept(result -> {
                         String text = result.text;
                         int max = cfg.agent.maxToolResultChars;
                         if (text.length() > max) text = text.substring(0, max) + "\n…(truncated, " + result.text.length() + " chars)";
-                        Message m = Message.toolResult(call, text);
-                        if (profile.vision) m.images.addAll(result.images);
-                        request.messages.add(m);
+                        if (fresh) {
+                            String what = callSummary(call);
+                            lastResults.add("> " + what + "\n" + text);
+                            if (profile.vision) lastImages.addAll(result.images);
+                            stepLog.add("step " + step + ": " + what + " -> " + abbreviate(oneLine(text), 240));
+                            if (call.name().equals("plan") && !result.error) pinnedPlan = text;
+                        } else {
+                            Message m = Message.toolResult(call, text);
+                            if (profile.vision) m.images.addAll(result.images);
+                            request.messages.add(m);
+                        }
                     }));
                 }
                 // Tool calls the model sent beyond the cap still need an answer for strict providers.
                 for (ToolCall skipped : resp.toolCalls.subList(calls.size(), resp.toolCalls.size())) {
-                    chain = chain.thenRun(() -> request.messages.add(Message.toolResult(skipped, "ERROR: skipped, too many tool calls in one step")));
+                    chain = chain.thenRun(() -> {
+                        if (fresh) stepLog.add("step " + step + ": " + callSummary(skipped) + " -> not run (too many calls in one step)");
+                        else request.messages.add(Message.toolResult(skipped, "ERROR: skipped, too many tool calls in one step"));
+                    });
                 }
                 return chain.thenCompose(v -> loop());
             });
@@ -233,10 +269,18 @@ public final class Agent {
         /** Step limit reached: answer the pending tool calls, then let the model report back once without acting. */
         CompletableFuture<Void> wrapUp(ChatResponse last) {
             Output.info("Step limit reached (agent.maxSteps = " + cfg.agent.maxSteps + "), asking for a summary.");
-            for (ToolCall c : last.toolCalls) request.messages.add(Message.toolResult(c, "ERROR: not executed - step limit reached"));
-            request.messages.add(Message.user("[system] You reached the step limit for this request. Do not call any tools now. "
-                    + "In 1-3 short lines tell the player what you did, what is left, and that they can say 'continue'."));
-            return provider.chat(request).handle((resp, t) -> {
+            String stop = "[system] You reached the step limit for this request. Do not call any tools now. "
+                    + "In 1-3 short lines tell the player what you did, what is left, and that they can say 'continue'.";
+            CompletableFuture<Void> prepared;
+            if (fresh) {
+                for (ToolCall c : last.toolCalls) stepLog.add("step " + step + ": " + callSummary(c) + " -> not run (step limit)");
+                prepared = ClientThread.call(() -> workMessage(stop)).thenAccept(this::setWork);
+            } else {
+                for (ToolCall c : last.toolCalls) request.messages.add(Message.toolResult(c, "ERROR: not executed - step limit reached"));
+                request.messages.add(Message.user(stop));
+                prepared = CompletableFuture.completedFuture(null);
+            }
+            return prepared.thenCompose(x -> provider.chat(request)).handle((resp, t) -> {
                 if (cancelled) return null;
                 if (resp != null) {
                     ChatResponse textOnly = new ChatResponse();
@@ -256,7 +300,18 @@ public final class Agent {
             if (tool == null || !Permissions.offered(tool, world)) {
                 return CompletableFuture.completedFuture(ToolResult.error("unknown or unavailable tool '" + call.name() + "'"));
             }
-            return ClientThread.call(() -> gate(tool, args)).thenCompose(gate -> {
+            String sig = call.name() + args;
+            return ClientThread.call(() -> {
+                // The same failed call twice in a row: stop and re-think, unless something changed since.
+                String here = situation();
+                if (!here.equals(failedAt)) failedCalls.clear();
+                int[] f = failedCalls.get(sig);
+                if (f != null && f[0] >= 2) {
+                    return new Gate("this exact call already failed twice here. Do not retry it: re-evaluate - look at the last errors, "
+                            + "try a different method or target (unstuck if you are stuck), or tell the player what blocks you", false, tool.category, tool.summarize(args));
+                }
+                return gate(tool, args);
+            }).thenCompose(gate -> {
                 if (gate.error != null) {
                     actionLog.add(tool.name + " (refused)");
                     return CompletableFuture.completedFuture(ToolResult.error(gate.error));
@@ -299,6 +354,12 @@ public final class Agent {
                         }
                         String hazard = Safety.take();
                         if (hazard != null) extra.append('\n').append(hazard);
+                        if (r.error && !r.text.contains("already failed twice")) {
+                            failedAt = situation();
+                            failedCalls.computeIfAbsent(sig, k -> new int[1])[0]++;
+                        } else if (!r.error) failedCalls.remove(sig);
+                        String stuck = r.error && MOVING.contains(tool.name) ? dev.silverx.llmcraft.game.Stuck.diagnose(Minecraft.getInstance()) : null;
+                        if (stuck != null) extra.append("\n[stuck] ").append(stuck).append(" - call unstuck (it tries the quick ways out), then continue.");
                         String nudge = nudge(tool.name, r.error);
                         if (nudge != null) extra.append("\n[note] ").append(nudge);
                         return r.append(extra.toString());
@@ -306,6 +367,57 @@ public final class Agent {
                     });
                 });
             });
+        }
+
+        /** Rough "where am I and what do I have" (block position + item total): failure memory resets when it changes. */
+        String situation() {
+            var p = Minecraft.getInstance().player;
+            if (p == null) return "";
+            return p.blockPosition().getX() / 2 + "," + p.blockPosition().getY() / 2 + "," + p.blockPosition().getZ() / 2 + "|" + Inv.totalCount();
+        }
+
+        /** Replaces the last message (the only one that changes between steps) with a new work message. */
+        void setWork(String text) {
+            request.messages.clear();
+            request.messages.addAll(base);
+            Message m = Message.user(text);
+            m.images.addAll(lastImages);
+            request.messages.add(m);
+        }
+
+        /**
+         * fresh mode: everything the next step needs in one message - nothing older is re-sent, so the
+         * context does not grow, while the system prompt + tools + history before it stay cached.
+         * Client thread (reads the game state).
+         */
+        String workMessage(String extra) {
+            StringBuilder sb = new StringBuilder();
+            sb.append(source == Source.USER ? "Request from your player: " : "[automatic trigger] ").append(input).append("\n\n");
+            if (!notes.isBlank()) sb.append("## Your notes (task_notes)\n").append(notes.trim()).append("\n\n");
+            if (pinnedPlan != null) sb.append("## Your plan (from the plan tool)\n").append(pinnedPlan.trim()).append("\n\n");
+            if (!stepLog.isEmpty()) {
+                sb.append("## Already done in this request (do not repeat what succeeded)\n");
+                int from = Math.max(0, stepLog.size() - Math.max(5, cfg.agent.stepLogEntries));
+                if (from > 0) sb.append("(").append(from).append(" earlier actions not shown)\n");
+                for (int i = from; i < stepLog.size(); i++) sb.append(stepLog.get(i)).append('\n');
+                sb.append('\n');
+            }
+            if (!lastText.isEmpty()) sb.append("## What you said last step\n").append(abbreviate(lastText, 600)).append("\n\n");
+            if (!lastResults.isEmpty()) {
+                sb.append("## Results of your last step\n");
+                for (String r : lastResults) sb.append(r).append("\n\n");
+            }
+            sb.append(PromptBuilder.stateBlock(cfg, world));
+            sb.append('\n').append(extra != null ? extra : stepLog.isEmpty()
+                    ? "Act on the request with tools, or just answer if it is only a question."
+                    : "Continue with the next tools, or reply to the player (no tool call) when the request is done or you are blocked.");
+            return sb.toString();
+        }
+
+        String callSummary(ToolCall call) {
+            Tool t = ToolRegistry.get(call.name());
+            JsonObject args = call.arguments() == null ? new JsonObject() : call.arguments();
+            return t == null ? call.name() + " " + abbreviate(args.toString(), 160) : t.summarize(args);
         }
 
         /**
@@ -370,7 +482,9 @@ public final class Agent {
                 if (!shownText.isEmpty()) shownText.append('\n');
                 shownText.append(text);
             }
-            if (cfg.chat.showTokenUsage && resp.promptTokens >= 0) Output.info("tokens: " + resp.promptTokens + " in / " + resp.completionTokens + " out");
+            if (resp.promptTokens >= 0) LlmCraft.LOGGER.info("[llm] step {}: prompt {} tok, prefill {} ms, output {} tok", step, resp.promptTokens, resp.promptMillis, resp.completionTokens);
+            if (cfg.chat.showTokenUsage && resp.promptTokens >= 0) Output.info("tokens: " + resp.promptTokens + " in / " + resp.completionTokens + " out"
+                    + (resp.promptMillis >= 0 ? " | prefill " + resp.promptMillis + " ms" : ""));
         }
 
         void complete(String finalText) {
@@ -380,6 +494,7 @@ public final class Agent {
             if (cfg.agent.keepToolSummariesInHistory && !actionLog.isEmpty()) {
                 assistant = (assistant + "\n[actions: " + abbreviate(String.join("; ", actionLog), 700) + "]").trim();
             }
+            if (!notes.isBlank()) assistant = (assistant + "\n[notes: " + abbreviate(oneLine(notes), 500) + "]").trim();
             if (source == Source.TRIGGER && assistant.isEmpty()) return; // nothing happened, keep history clean
             world.addHistory(new HistoryEntry("user", userText));
             world.addHistory(new HistoryEntry("assistant", assistant.isEmpty() ? "(no reply)" : assistant));
@@ -391,6 +506,9 @@ public final class Agent {
             return t.equals("NOTHING") || t.equals("NOTHING.") || t.equals("[NOTHING]");
         }
     }
+
+    /** Tools that move the player: a failure there gets a stuck diagnosis. */
+    private static final java.util.Set<String> MOVING = java.util.Set.of("walk_to", "move", "baritone", "mine", "fight", "use_block", "unstuck");
 
     /** Read-only lookups that a stuck model tends to repeat endlessly. */
     private static final java.util.Set<String> PROBES = java.util.Set.of("get_block", "find_blocks", "look", "look_at", "screenshot", "player_status", "inventory",
@@ -418,6 +536,27 @@ public final class Agent {
                     + " or save the key directly with /llm key " + p.name + " <key>.";
         }
         return "No API key for profile '" + p.name + "'. Save one with /llm key " + p.name + " <key> (or set \"apiKey\": \"env:VARIABLE\" in config.json).";
+    }
+
+    /** Who started the running request (attacking players needs the player's own order). */
+    public static Source currentSource() {
+        Job j = ACTIVE;
+        return j == null || j != current ? null : j.source;
+    }
+
+    /** The running request (for tools that talk to it, like task_notes). */
+    private static volatile Job ACTIVE;
+
+    /** task_notes: the model's own scratchpad for the running request; shown in every following step. */
+    public static String setNotes(String text) {
+        Job j = ACTIVE;
+        if (j == null || j != current) return "no request is running";
+        j.notes = text == null ? "" : abbreviate(text.trim(), 1500);
+        return null;
+    }
+
+    static String oneLine(String s) {
+        return s == null ? "" : s.replace('\n', ' ').replaceAll("\\s+", " ").trim();
     }
 
     private static boolean warnedContext;

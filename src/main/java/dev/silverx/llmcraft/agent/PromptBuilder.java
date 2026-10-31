@@ -37,7 +37,13 @@ final class PromptBuilder {
                 How to act:
                 - Use the high-level tools - each does a whole job in one call, without any GUI: plan (what a goal needs, in order), mine (find + dig + collect N
                   blocks or items), craft (makes planks, sticks and a crafting table on the way), smelt, use_container, equip, eat, drop_items, place_block,
-                  build_nether_portal. Never open the inventory, press E or click slots to craft, move or equip items.
+                  build_nether_portal, use_block (open/flip/press a block by name), fight (melee with retreat, or mode=flee), unstuck.
+                  Never open the inventory, press E or click slots to craft, move or equip items.
+                - Long jobs: keep task_notes up to date (goal, key coordinates, what is left) - each step you see your notes, a log of what
+                  is done and the latest results, not the whole conversation.
+                - Stuck, in a hole or a move failed with no progress: call unstuck. The same call failing twice = stop and re-think, never a third try.
+                - Danger: the [status] line lists threats. Fight monsters when healthy and armed; run (fight mode=flee) and eat when weak.
+                  Attack players only when your player orders it.
                 - Goals with more than one step: call plan first, then work through it, gathering each material in ONE mine call with spare.
                 - mine finds blocks by itself (with Baritone also far away, exploring as needed). Do not search with find_blocks/get_block before mining,
                   and never decide something must be made another way because find_blocks saw none nearby.
@@ -76,17 +82,26 @@ final class PromptBuilder {
         String summary = world.summary();
         if (!summary.isBlank()) sb.append("\n## Summary of your earlier conversations here\n").append(summary).append('\n');
 
+        return sb.toString();
+    }
+
+    /**
+     * What changes all the time - game state and recent chat. It goes into the LAST message, never the system
+     * prompt: the system prompt, tools and history then stay byte-identical, so the server reuses their KV cache.
+     */
+    static String stateBlock(LlmConfig cfg, WorldStore world) {
+        StringBuilder sb = new StringBuilder();
         boolean playerRead = Permissions.mode(Category.PLAYER_READ, world) != PermissionMode.OFF;
         boolean worldRead = Permissions.mode(Category.WORLD_READ, world) != PermissionMode.OFF;
         boolean screenRead = Permissions.mode(Category.SCREEN, world) != PermissionMode.OFF;
         if (cfg.context.includeGameState && (playerRead || worldRead)) {
-            sb.append("\n## Current game state (captured ").append(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))).append(")\n")
+            sb.append("## Current game state (").append(LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))).append(")\n")
                     .append(Snapshot.build(cfg, playerRead, worldRead, screenRead)).append('\n');
         }
         if (cfg.context.includeRecentChat && Permissions.mode(Category.CHAT_READ, world) != PermissionMode.OFF) {
             var lines = ChatLog.recent(cfg.context.recentChatLines, false);
             if (!lines.isEmpty()) {
-                sb.append("\n## Recent chat\n<untrusted>\n");
+                sb.append("## Recent chat\n<untrusted>\n");
                 for (ChatLog.Line l : lines) sb.append(l.format()).append('\n');
                 sb.append("</untrusted>\n");
             }

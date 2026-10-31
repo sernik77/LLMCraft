@@ -289,6 +289,47 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
             check(ctx, "build_nether_portal", "{}", "built and lit");
             assertTrue(count(ctx, Items.OBSIDIAN) == 0, "portal did not use the 10 obsidian");
 
+            // Lava ahead stops walking; a 1x1 shaft is diagnosed and unstuck pillars out of it.
+            int[] hp0 = ctx.computeOnClient(mc -> {
+                int x = mc.player.getBlockX() + 6, z = mc.player.getBlockZ() + 6;
+                return new int[]{x, mc.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, x, z), z};
+            });
+            sp.getServer().runCommand("tp Player0 " + (hp0[0] + 0.5) + " " + hp0[1] + " " + (hp0[2] + 0.5));
+            sp.getServer().runCommand("setblock " + (hp0[0] + 1) + " " + hp0[1] + " " + hp0[2] + " minecraft:lava");
+            ctx.waitTicks(10);
+            String lava = ctx.computeOnClient(mc -> dev.silverx.llmcraft.game.Danger.aheadOf(mc, 1, 0));
+            String where = ctx.computeOnClient(mc -> mc.player.position() + " ground=" + mc.player.onGround());
+            assertTrue(lava != null && lava.contains("lava"), "lava ahead not detected: " + lava + " at " + where);
+            sp.getServer().runCommand("setblock " + (hp0[0] + 1) + " " + hp0[1] + " " + hp0[2] + " minecraft:air");
+            sp.getServer().runCommand("fill " + (hp0[0] - 1) + " " + (hp0[1] - 3) + " " + (hp0[2] - 1) + " " + (hp0[0] + 1) + " " + (hp0[1] - 1) + " " + (hp0[2] + 1) + " minecraft:stone");
+            sp.getServer().runCommand("fill " + hp0[0] + " " + (hp0[1] - 3) + " " + hp0[2] + " " + hp0[0] + " " + (hp0[1] - 1) + " " + hp0[2] + " minecraft:air");
+            sp.getServer().runCommand("tp Player0 " + (hp0[0] + 0.5) + " " + (hp0[1] - 3) + " " + (hp0[2] + 0.5));
+            sp.getServer().runCommand("give Player0 minecraft:cobblestone 16");
+            ctx.waitTicks(20);
+            String diag = ctx.computeOnClient(dev.silverx.llmcraft.game.Stuck::diagnose);
+            assertTrue(diag != null && diag.contains("hole"), "1x1 shaft not diagnosed: " + diag);
+            check(ctx, "unstuck", "{}", "free");
+            assertTrue(ctx.computeOnClient(mc -> mc.player.getY()) >= hp0[1] - 0.1, "unstuck did not get out of the shaft");
+
+            // Fighting: a husk (does not burn in daylight) is killed with the best weapon.
+            sp.getServer().runCommand("difficulty easy");
+            sp.getServer().runCommand("give Player0 minecraft:iron_sword 1");
+            int[] f = ctx.computeOnClient(mc -> new int[]{mc.player.getBlockX(), mc.player.getBlockY(), mc.player.getBlockZ()});
+            sp.getServer().runCommand("summon minecraft:husk " + (f[0] + 3) + " " + f[1] + " " + f[2] + " {NoAI:1b,PersistenceRequired:1b}");
+            ctx.waitTicks(10);
+            check(ctx, "fight", "{\"target\":\"husk\"}", "killed 1");
+            assertTrue(ctx.computeOnClient(mc -> mc.player.getMainHandItem().is(Items.IRON_SWORD)), "fight did not equip the sword");
+            sp.getServer().runCommand("difficulty peaceful");
+
+            // use_block: flip a lever by name.
+            int[] lv = ctx.computeOnClient(mc -> new int[]{mc.player.getBlockX(), mc.player.getBlockY(), mc.player.getBlockZ()});
+            sp.getServer().runCommand("setblock " + (lv[0] + 2) + " " + lv[1] + " " + lv[2] + " minecraft:lever[face=floor]");
+            ctx.waitTicks(10);
+            check(ctx, "use_block", "{\"block\":\"lever\"}", "used lever");
+            ctx.waitTicks(10);
+            assertTrue(ctx.computeOnClient(mc -> mc.level.getBlockState(new net.minecraft.core.BlockPos(lv[0] + 2, lv[1], lv[2]))
+                    .getValue(net.minecraft.world.level.block.LeverBlock.POWERED)), "use_block did not flip the lever");
+
             ctx.takeScreenshot("llmcraft-tools");
 
             int toolChars = ctx.computeOnClient(mc -> {
@@ -343,7 +384,7 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
                 int ctxTokens = ctx.computeOnClient(mc -> ConfigManager.get().activeProfile().contextTokens);
                 LlmCraft.LOGGER.info("[gametest] prompt tokens {} / context {}", promptTokens, ctxTokens);
                 assertTrue(promptTokens > 0 && promptTokens < ctxTokens, "prompt does not fit the context window: " + promptTokens + " / " + ctxTokens);
-                assertTrue(answer.contains("player_status"), "agent did not use player_status: " + answer);
+                // The state is in the work message now, so the model may answer without calling player_status.
                 assertTrue(answer.matches("(?s).*\\b20(\\.0)?\\b.*"), "agent answer lacks the health value 20: " + answer);
 
                 // End to end: "craft a pickaxe" from logs must go through the craft tool, not GUI clicks.
@@ -361,12 +402,12 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
                 // Step limit: the request ends with a summary instead of an abrupt stop.
                 ctx.runOnClient(mc -> {
                     ConfigManager.get().agent.maxSteps = 1;
-                    Agent.submit("Call the inventory tool and tell me what I have.", Agent.Source.USER);
+                    Agent.submit("Call the recipe_info tool for torch, then tell me the recipe.", Agent.Source.USER);
                 });
                 ctx.waitFor(mc -> !Agent.busy(), 20 * 300);
                 String wrapped = ctx.computeOnClient(mc -> Stores.current().history().getLast().text);
                 LlmCraft.LOGGER.info("[gametest] after step limit: {}", wrapped);
-                assertTrue(!wrapped.isBlank() && !wrapped.equals("(no reply)") && wrapped.contains("inventory"), "no summary after the step limit: " + wrapped);
+                assertTrue(!wrapped.isBlank() && !wrapped.equals("(no reply)") && wrapped.toLowerCase().contains("torch"), "no summary after the step limit: " + wrapped);
                 ctx.runOnClient(mc -> ConfigManager.get().agent.maxSteps = 32);
                 ctx.takeScreenshot("llmcraft-agent");
             } else {

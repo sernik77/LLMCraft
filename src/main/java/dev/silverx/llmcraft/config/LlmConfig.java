@@ -55,6 +55,14 @@ public final class LlmConfig {
         public int maxToolResultChars = 4000;
         /** Overall timeout for one request (all steps), seconds. */
         public int requestTimeoutSeconds = 600;
+        /**
+         * "fresh": every step sends the same system prompt + history (cached by the server) plus ONE rebuilt message
+         * with the request, notes, a compact log of what was done and the latest results - the context never fills up.
+         * "append": the classic growing chat of tool calls and results.
+         */
+        public String contextMode = "fresh";
+        /** fresh mode: how many one-line entries of earlier steps are shown. */
+        public int stepLogEntries = 30;
         /** Include the built-in playbook (working method, Baritone, progression, portal, safety) in the system prompt. */
         public boolean includePlaybook = true;
         /** Extra text appended to the built-in system prompt (the global instructions file is separate). */
@@ -109,6 +117,9 @@ public final class LlmConfig {
         public boolean stopOnDamage = false;
         /** Stop all AI control when you press a movement key yourself. */
         public boolean stopOnPlayerInput = true;
+        /** While the AI acts: run from a hissing creeper, and run when health is at/below fleeHealth with monsters close. */
+        public boolean autoFlee = true;
+        public float fleeHealth = 6;
     }
 
     public static final class Triggers {

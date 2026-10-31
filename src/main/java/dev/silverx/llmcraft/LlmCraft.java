@@ -54,6 +54,7 @@ public final class LlmCraft implements ClientModInitializer {
 
         ClientTickEvents.START_CLIENT_TICK.register(Controller::tick);
         ClientTickEvents.START_CLIENT_TICK.register(Safety::tick);
+        ClientTickEvents.START_CLIENT_TICK.register(dev.silverx.llmcraft.game.Danger::tick);
         ClientPlayerBlockBreakEvents.AFTER.register((level, player, pos, state) -> Mining.onBroken(state));
         ClientTickEvents.END_CLIENT_TICK.register(LlmCraft::endTick);
 

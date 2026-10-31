@@ -115,11 +115,16 @@ public final class ModTools {
                 }).build());
 
         out.add(Tool.builder("baritone", Category.BARITONE,
-                        "Run a Baritone command (no prefix) for travel and automation: 'goto 100 64 -20' (stand at that spot), 'goto diamond_ore' (walk to the nearest one), "
-                                + "'follow player Alex', 'explore', 'farm', 'come', 'thisway 100', 'stop'. For gathering blocks prefer the mine tool (it counts and stops). "
-                                + "With wait=true the call returns when Baritone is idle again, with Baritone's own messages.")
+                        "Run any Baritone command (no '#'). Travel: 'goto x y z' (stand there) / 'goto x z' / 'goto <block>' (next to the nearest one) / 'goto y'; "
+                                + "'surface'; 'come'; 'thisway 200'; 'axis'. Work: 'mine <block>' (prefer the mine tool for counts), 'farm [range]', 'tunnel', "
+                                + "'explore [x z]', 'follow player <name>' / 'follow players' / 'follow entities' / 'follow entity <type>', 'pickup [item]', "
+                                + "'build <schematic>', 'sel ...'. Waypoints: 'sethome', 'home', 'waypoints save user <name>' (where you stand), "
+                                + "'waypoints goto <name>', 'waypoints list', 'waypoints delete <name>'. Control: 'stop' (also 'cancel'), 'pause', 'resume', 'proc', 'eta'. "
+                                + "Settings on the fly: 'set <name> <value>' (e.g. 'set allowBreak false', 'set avoidance true', 'set maxFallHeightNoWater 3', "
+                                + "'set allowPlace true', 'set legitMine true'), 'settings <filter>' / 'get <name>' to read them. 'help' lists every command of this "
+                                + "Baritone, 'help <command>' shows its usage. follow/explore/farm/elytra run until 'stop' and do not wait by default.")
                 .param("command", "string", "Baritone command without '#'", true)
-                .param("wait", "boolean", "Wait until Baritone finishes (default true)", false)
+                .param("wait", "boolean", "Wait until Baritone finishes (default true; false for follow/explore/farm/elytra)", false)
                 .param("timeout_seconds", "number", "Max wait (default 180)", false)
                 .available(ctx -> BaritoneBridge.available())
                 .summary(a -> "baritone " + Args.str(a, "command", ""))
@@ -144,6 +149,8 @@ public final class ModTools {
                 .async((ctx, a) -> {
                     String cmd = Args.reqStr(a, "command").trim();
                     if (cmd.startsWith("#")) cmd = cmd.substring(1);
+                    String info = baritoneInfo(cmd);
+                    if (info != null) return CompletableFuture.completedFuture(ToolResult.ok(info));
                     long started = System.currentTimeMillis();
                     boolean ok;
                     try {
@@ -153,15 +160,25 @@ public final class ModTools {
                     }
                     if (!ok) return CompletableFuture.completedFuture(ToolResult.error("Baritone did not accept '" + cmd + "'"));
                     String c = cmd;
-                    if (!Args.bool(a, "wait", true) || cmd.startsWith("stop") || cmd.startsWith("cancel")) {
-                        return ChatTools.collectFeedback(started, 500)
-                                .thenApply(fb -> ToolResult.ok("baritone: " + c + (Args.bool(a, "wait", true) ? "" : " (running in the background)") + Mining.baritoneMessages(started, 4)));
+                    String verb = cmd.split("\\s+")[0].toLowerCase(Locale.ROOT);
+                    boolean continuous = CONTINUOUS.contains(verb) || verb.equals("mine");
+                    String[] words = cmd.split("\\s+");
+                    boolean travel = words.length >= 2 && words[1].equalsIgnoreCase("goto") && (verb.equals("waypoints") || verb.equals("waypoint") || verb.equals("wp"));
+                    boolean wait = Args.bool(a, "wait", !continuous);
+                    if (verb.equals("set") && cmd.split("\\s+").length >= 3) {
+                        String now = BaritoneBridge.setting(cmd.split("\\s+")[1]);
+                        return ChatTools.collectFeedback(started, 300).thenApply(fb -> ToolResult.ok("baritone " + c + (now != null ? " -> " + now : "") + Mining.baritoneMessages(started, 6)));
+                    }
+                    if (!wait || INSTANT.contains(verb) && !travel) {
+                        return ChatTools.collectFeedback(started, 600)
+                                .thenApply(fb -> ToolResult.ok("baritone: " + c + (wait || INSTANT.contains(verb) ? "" : " (running in the background until 'stop')")
+                                        + Mining.baritoneMessages(started, 20)));
                     }
                     int timeout = (int) (Args.num(a, "timeout_seconds", 180) * 20);
                     return Controller.run(Mining.baritoneWatch("baritone " + c, null, null), timeout).thenApply(r -> {
                         var p = Minecraft.getInstance().player;
                         String pos = p == null ? "" : String.format(Locale.ROOT, " | position %.1f %.1f %.1f", p.getX(), p.getY(), p.getZ());
-                        String text = "baritone '" + c + "': " + r + pos + Mining.baritoneMessages(started, 4);
+                        String text = "baritone '" + c + "': " + r + pos + Mining.baritoneMessages(started, 8);
                         return Script.failed(r) ? ToolResult.error(text) : ToolResult.ok(text);
                     });
                 }).build());
@@ -177,6 +194,38 @@ public final class ModTools {
                     text = text.replaceAll("(?i)(access[_-]?token|api[_-]?key|authorization|bearer|session)([\"'=: ]+)\\S+", "$1$2<redacted>");
                     return ToolResult.ok(text.isEmpty() ? "(no matching lines)" : text);
                 }).build());
+    }
+
+    /** Commands that keep running until 'stop' (the tool does not wait for them by default). */
+    private static final java.util.Set<String> CONTINUOUS = java.util.Set.of("follow", "explore", "farm", "elytra", "explorefilter");
+    /** Commands that answer right away (lists, toggles, waypoints). */
+    private static final java.util.Set<String> INSTANT = java.util.Set.of("stop", "cancel", "pause", "resume", "proc", "eta", "waypoints", "waypoint", "wp",
+            "sethome", "sel", "render", "gc", "reloadall", "saveall", "version", "blacklist", "invert", "repack", "find", "help", "goal", "forcecancel");
+
+    /** Answers help/settings questions from the installed Baritone itself; null when it is a real command. */
+    static String baritoneInfo(String cmd) {
+        String[] w = cmd.trim().split("\\s+");
+        String verb = w[0].toLowerCase(Locale.ROOT);
+        if (verb.equals("help") || verb.equals("commands")) {
+            if (w.length >= 2) {
+                String h = BaritoneBridge.commandHelp(w[1]);
+                return h == null ? "no Baritone command '" + w[1] + "'" : h;
+            }
+            List<String> all = BaritoneBridge.commands();
+            return all.isEmpty() ? null : "Baritone commands (help <command> for usage):\n" + String.join("\n", all);
+        }
+        if (verb.equals("settings") || verb.equals("get") || verb.equals("set") && w.length == 2) {
+            String filter = w.length >= 2 ? w[1] : "";
+            if (verb.equals("get") || verb.equals("set")) {
+                String one = BaritoneBridge.setting(filter);
+                if (one != null) return one;
+            }
+            List<String> found = BaritoneBridge.settingNames(filter);
+            if (found.isEmpty()) return "no Baritone setting matching '" + filter + "'";
+            if (found.size() > 60) found = found.subList(0, 60);
+            return String.join("\n", found) + "\nChange one with: set <name> <value>";
+        }
+        return null;
     }
 
     static boolean hidden(String relPath) {

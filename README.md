@@ -17,7 +17,7 @@ LLMCraft podłącza dowolny model językowy do klienta gry: model czyta czat, ś
 | Mod Menu + Cloth Config | opcjonalne — ekran ustawień |
 | Baritone (także fork Meteora) | opcjonalne — narzędzie `baritone` |
 
-Skopiuj `build/libs/llmcraft-1.2.0.jar` do folderu `mods` (usuń starszą wersję).
+Skopiuj `build/libs/llmcraft-1.3.0.jar` do folderu `mods` (usuń starszą wersję).
 
 ## Szybki start (lokalna Ollama)
 
@@ -98,7 +98,7 @@ Nowy profil z poziomu gry (indeks = liczba istniejących profili, domyślnie 6):
 - Kategoria `OFF` = model w ogóle nie widzi tych narzędzi.
 - `commandDenyPatterns` (np. `op`, `ban`, `stop`) blokują komendy zawsze; `commandAutoAllowPatterns` przepuszczają bez pytania.
 
-## Narzędzia (≈49)
+## Narzędzia (≈54)
 
 Najważniejsza zasada: **model nie klika po GUI**. Crafting, skrzynie, piece, zakładanie przedmiotów i kopanie to pojedyncze wywołania, które mod wykonuje sam — tymi samymi pakietami, co gra (kliknięcia slotów, przycisk „umieść recepturę” z recipe booka). Zrzuty ekranu i kursor nie są potrzebne do zwykłej gry.
 
@@ -108,7 +108,10 @@ Najważniejsza zasada: **model nie klika po GUI**. Crafting, skrzynie, piece, za
 - **Czat/komendy**: `read_chat`, `send_chat`, `run_command`, `mod_chat_command`, `list_client_commands`
 - **Odczyt**: `player_status`, `inventory`, `world_info`, `get_block`, `find_blocks`, `nearby_entities`, `wait`
 - **Ruch**: `look`, `look_at`, `move`, `walk_to`, `stop_actions`
-- **Interakcja**: `attack`, `use_item`, `interact_entity`, `mine_block` (sam dobiera najlepsze narzędzie), `place_block` (z parametrem `item`)
+- **Interakcja**: `use_block` (prawy klik / krótkie uderzenie bloku po nazwie: piec, skrzynia, drzwi, dźwignia, łóżko; gdy jest dalej — najpierw `goto <blok>` Baritone), `attack`, `use_item`, `interact_entity`, `mine_block` (sam dobiera najlepsze narzędzie), `place_block` (z parametrem `item`; nigdy nie klika w stół/skrzynię/drzwi)
+- **Walka i zagrożenia**: `fight` — najlepsza broń, pościg, cios przy pełnym naładowaniu, odskok od creepera, sam przerywa przy niskim HP (`retreat_health`); cele: `hostiles`, typ moba, `player:<nick>` (tylko na wyraźne polecenie gracza, nie z wyzwalacza), `entity_id`; `mode=flee` — ucieczka od zagrożeń z omijaniem urwisk i lawy
+- **Zablokowanie**: `unstuck` — diagnoza (szyb 1×1, zakopany, ślepy zaułek, woda, pajęczyna) i szybkie wyjścia: Baritone do otwartego miejsca, pillar w górę, przekop w bok, wypłynięcie; po 2 próbach bez postępu przerywa i każe przemyśleć sytuację
+- **Notatki zadania**: `task_notes` — notatnik modelu na czas zapytania (cel, współrzędne, co zostało), widoczny w każdym kolejnym kroku
 - **GUI innych modów**: `read_screen`, `click_widget`, `type_text`, `click_slot`, `close_screen`
 - **Klawisze**: `list_keybinds`, `press_keybind`, `press_key`
 - **Mody**: `list_mods`, `mod_info`, `list_config_files`, `read_config_file`, `baritone`
@@ -123,6 +126,8 @@ Każdy wynik akcji kończy się zmianą ekwipunku (`inventory: +3 oak_log, -1 st
 
 ### Bezpieczeństwo w trakcie pracy
 - Gdy gracz się topi (mało powietrza) albo stoi w lawie, mod przerywa wszystkie akcje AI i Baritone, zamyka GUI i wypływa w górę; model dostaje o tym informację.
+- Odruchy (tylko gdy AI działa, `control.autoFlee`): ucieczka przed syczącym creeperem i przed potworami przy HP ≤ `control.fleeHealth` (6); własne chodzenie AI zatrzymuje się przed lawą i spadkiem 4+ bloków. Linia statusu pokazuje zagrożenia (`threats: zombie 5m…`) i zablokowanie.
+- Watchdog postępu: zadania ruchu (Baritone goto/mine, chodzenie, pościg) kończą się po ~8 s bez żadnego postępu (ruch, kopanie, zbieranie, liczenie ścieżki) z diagnozą, zamiast czekać do timeoutu. To samo nieudane wywołanie dwa razy z rzędu jest blokowane, dopóki gracz nie zmieni miejsca albo ekwipunku.
 - Komendy, których serwer Ci nie udostępnia (np. `/give` bez cheatów), są odrzucane przed wysłaniem; w stanie gry model widzi „Operator commands: allowed / NOT allowed”.
 - Komunikaty Baritone/Meteor (które omijają zwykłe zdarzenia czatu) są przechwytywane i trafiają do wyników narzędzi, np. „Unable to find any path”.
 
@@ -132,7 +137,20 @@ Każdy wynik akcji kończy się zmianą ekwipunku (`inventory: +3 oak_log, -1 st
 - `press_keybind` — dowolny keybind z menu Sterowanie (vanilla i mody, np. mapa Xaero).
 - `press_key` — symulacja fizycznego klawisza dla modów z własnym systemem skrótów (np. Meteor) i w GUI.
 - `read_screen` / `click_widget` / `type_text` — obsługa ekranów dowolnego moda.
-- `baritone` — bezpośrednio przez API Baritone (bez czatu), z czekaniem na zakończenie i komunikatami Baritone w wyniku. Uwaga: `goto x y z` znaczy „stań w tym bloku” — mod blokuje cel w pełnym bloku (Baritone by go wykopał).
+- `baritone` — bezpośrednio przez API Baritone (bez czatu), z czekaniem na zakończenie i komunikatami Baritone w wyniku. Obsługuje każdą komendę zainstalowanego Baritone: `help` / `help <komenda>` (opisy prosto z jara), `settings <fraza>` / `get <nazwa>` / `set <nazwa> <wartość>` (konfiguracja w locie), waypointy (`sethome`, `home`, `waypoints save user <nazwa>`, `waypoints goto <nazwa>`), `follow`, `explore`, `farm`, `tunnel`, `pickup`, `surface`… Komendy ciągłe (follow/explore/farm/elytra) domyślnie nie blokują. Uwaga: `goto x y z` znaczy „stań w tym bloku” — mod blokuje cel w pełnym bloku (Baritone by go wykopał).
+
+## Kontekst, cache i inferencja
+
+**Tryb `agent.contextMode = "fresh"` (domyślny).** Każdy krok wysyła: ten sam prompt systemowy + schematy narzędzi + historię (bajt w bajt identyczne → serwer trzyma je w cache KV) i **jedną** odbudowaną wiadomość na końcu: polecenie, notatki modelu (`task_notes`), przypięty wynik `plan`, jednolinijkowy log tego, co już zrobione, pełne wyniki ostatniego kroku i aktualny stan gry. Kontekst nie rośnie z krokami, a przeliczany jest tylko ogon. Stan gry i czat nie siedzą już w prompcie systemowym, więc cache działa też między zapytaniami. Pomiar w gametestach (Ollama, ~10,5k tokenów promptu): pierwszy prefill ~1,9 s, każdy kolejny krok ~0,3 s. Czasy prefillu widać w logu (`[llm] step N: prompt … tok, prefill … ms`) i na czacie po włączeniu `chat.showTokenUsage`. Stary tryb rosnącej rozmowy: `"append"`.
+
+**Ollama (serwer).** Najważniejsze zmienne środowiskowe: `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q4_0` (albo `q8_0` — mniej pamięci niż f16, q4 ~połowa q8), `OLLAMA_NUM_PARALLEL=1` (jeden slot = pewne trafienia w cache prefiksu), `keep_alive` w `extraBody` profilu (np. `"30m"`), żeby model nie był wyładowywany między zapytaniami. `num_ctx` mod wysyła sam z `contextTokens` profilu.
+
+**Speculative decoding.** Ollama (0.40) ma modele draft (`DRAFT` w Modelfile) tylko w runnerze MLX dla modeli safetensors — dla GGUF na CUDA/ROCm nie działa. Dla GGUF użyj `llama-server` z llama.cpp i profilu typu OpenAI:
+```
+llama-server -m Qwen3.8-27B-Q4_K_M.gguf -md Qwen3.5-0.8B-Q8_0.gguf --draft-max 16 --draft-min 2 \
+  -ngl 99 -ngld 99 -fa on -ctk q4_0 -ctv q4_0 -c 131072 --cache-reuse 256 --jinja --port 8080
+```
+Model draft musi mieć ten sam tokenizer (ta sama rodzina, np. mały Qwen do dużego Qwena). W `config.json` profil: `"type": "OPENAI"`, `"baseUrl": "http://localhost:8080/v1"`, `"model": "qwen"`, `"toolMode": "NATIVE"`. `--jinja` jest potrzebne do natywnych wywołań narzędzi, `--cache-reuse` do ponownego użycia cache prefiksu.
 
 ## Wyzwalacze automatyczne (domyślnie wyłączone)
 

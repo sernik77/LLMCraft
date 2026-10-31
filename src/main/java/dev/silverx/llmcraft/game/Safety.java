@@ -46,6 +46,14 @@ public final class Safety {
         }
     }
 
+    /** Queues a message for the model's next tool result (and shows it to the player). */
+    public static void report(String msg) {
+        Output.error(msg);
+        synchronized (Safety.class) {
+            pending = pending == null ? msg : pending + "\n" + msg;
+        }
+    }
+
     /** The hazard that happened since the last call, or null. */
     public static synchronized String take() {
         String s = pending;

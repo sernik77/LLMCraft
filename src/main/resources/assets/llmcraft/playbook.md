@@ -13,6 +13,23 @@
 - Useful baritone commands: "goto x y z" (stand there), "goto x z", "goto <block>" (nearest one), "surface" (go up to open air), "explore", "follow player <name>", "farm" (harvest and replant nearby crops), "tunnel", "come", "stop".
 - Long jobs are fine: mine can run for minutes. Give a bigger timeout_seconds for far or slow targets (obsidian, diamonds).
 
+### Baritone, more
+- Waypoints: "sethome" / "home"; "waypoints save user <name>" saves where you stand, "waypoints goto <name>" walks there, "waypoints list", "waypoints delete <name>". Also remember important places with remember.
+- "follow player <name>" (or "follow players", "follow entity cow") keeps following until "stop"; "explore" and "farm" also run until "stop".
+- Configure on the fly with "set <name> <value>": allowBreak/allowPlace (stop it digging or bridging), avoidance true (steer around monsters), maxFallHeightNoWater 3, legitMine true (only visible ores), allowSprint, allowParkour. "settings <word>" lists matching settings, "help <command>" shows usage.
+- To use a block (furnace, chest, door, lever, bed), call use_block with its name - it walks there if needed and clicks it.
+
+### Getting unstuck
+- Tools stop by themselves after a few seconds without progress and say why ([stuck] / "no progress"). Then call unstuck: it tries Baritone to an open spot, pillaring up or digging out, and stops after 2 failed attempts.
+- After 2 failures of the same thing: do not retry. Think about why (wall, water, no blocks to pillar, unreachable target) and pick another way or ask the player.
+
+### Fighting and danger
+- Before fighting: best sword/axe (fight equips it), health above 12, food eaten. fight target=hostiles clears monsters around you; it stops at low health by itself.
+- Creepers: hit once and step back (fight does this); never let one reach you while you dig.
+- Skeletons: close the distance fast or break line of sight. Many monsters or weak: fight mode=flee, then eat, then come back.
+- While the AI acts, reflexes run on their own: running from a hissing creeper or from monsters at low health, and never walking into lava or off a 4+ block drop. Read SAFETY notes and deal with the cause.
+- Players: fight player:<name> only on your player's direct order.
+
 ### Progression and where things are
 - Wood: 1 log = 4 planks; 2 planks = 4 sticks. Crafting table = 4 planks.
 - Tool tiers: wooden pickaxe mines stone and coal; stone pickaxe mines iron, copper, lapis; iron pickaxe mines diamond, gold, redstone, emerald; diamond pickaxe mines obsidian and ancient debris.
