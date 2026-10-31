@@ -244,6 +244,8 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
                 var set = dev.silverx.llmcraft.game.Mining.resolve("diamond");
                 return set.contains(net.minecraft.world.level.block.Blocks.DIAMOND_ORE) && !set.contains(net.minecraft.world.level.block.Blocks.DIAMOND_BLOCK);
             }), "resolve('diamond') should mean the ores");
+            assertTrue(ctx.computeOnClient(mc -> !dev.silverx.llmcraft.game.Mining.resolve("diamonds").contains(net.minecraft.world.level.block.Blocks.DIAMOND_BLOCK)),
+                    "resolve('diamonds') should mean the ores");
             String diamond = run(ctx, "mine", "{\"block\":\"diamond\",\"count\":3}").text;
             assertTrue(diamond.contains("iron_pickaxe"), "mine diamond should ask for an iron pickaxe first: " + diamond);
 

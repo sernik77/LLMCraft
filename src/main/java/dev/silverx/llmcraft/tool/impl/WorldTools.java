@@ -76,7 +76,7 @@ public final class WorldTools {
                     String query = Args.reqStr(a, "block");
                     // "diamond", "raw_iron", "flint": mine the source block, count the item.
                     Sources.Mined alias = Sources.alias(query);
-                    Item wanted = alias != null ? Inv.item(query.trim()) : null;
+                    Item wanted = alias != null ? Sources.aliasItem(query) : null;
                     Set<Block> blocks = alias != null ? alias.blocks() : Mining.resolve(query);
                     if (blocks.isEmpty()) return err("unknown block '" + query + "'");
                     int count = Math.max(1, Math.min(2304, Args.integer(a, "count", 1)));

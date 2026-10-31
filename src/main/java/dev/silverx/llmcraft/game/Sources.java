@@ -127,6 +127,7 @@ public final class Sources {
         String q = query.trim().toLowerCase(java.util.Locale.ROOT).replaceFirst("^minecraft:", "");
         if (q.contains(" ") || q.contains(",")) return null;
         Row row = MINED.get(q);
+        if (row == null && q.endsWith("s")) row = MINED.get(q = q.substring(0, q.length() - 1)); // "diamonds"
         if (row == null || row.block.equals(q)) return null;
         return new Mined(Mining.resolve(row.block), row.perBlock, row.note);
     }
@@ -137,6 +138,13 @@ public final class Sources {
         return id.equals("coal") || id.equals("charcoal") || id.equals("coal_block") || id.equals("blaze_rod") || id.equals("dried_kelp_block")
                 || id.equals("stick") || id.equals("bamboo") || id.endsWith("_log") || id.endsWith("_wood") || id.endsWith("_planks")
                 || id.endsWith("_stem") || id.endsWith("_hyphae") || id.endsWith("_sapling");
+    }
+
+    /** The item an {@link #alias} query counts ("diamonds" -> diamond). */
+    public static Item aliasItem(String query) {
+        String q = query.trim().toLowerCase(java.util.Locale.ROOT).replaceFirst("^minecraft:", "");
+        if (!MINED.containsKey(q) && q.endsWith("s")) q = q.substring(0, q.length() - 1);
+        return Inv.item(q);
     }
 
     public static String mobDrop(Item item) {
