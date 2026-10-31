@@ -1,0 +1,83 @@
+plugins {
+    id 'fabric-loom'
+}
+
+version = project.bridge_version
+group = project.maven_group
+
+base {
+    archivesName = 'llmcraft-bridge'
+}
+
+repositories {
+    maven { name = 'Meteor'; url = 'https://maven.meteordev.org/releases' }
+    maven { name = 'Meteor snapshots'; url = 'https://maven.meteordev.org/snapshots' }
+    exclusiveContent {
+        forRepository { maven { name = 'Modrinth'; url = 'https://api.modrinth.com/maven' } }
+        filter { includeGroup 'maven.modrinth' }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    // LLMCraft itself (required at runtime, not bundled)
+    implementation project(path: ':', configuration: 'namedElements')
+
+    // Both integrations are optional at runtime: the bridge only touches a mod when it is installed.
+    modCompileOnly("meteordevelopment:meteor-client:${project.meteor_version}") { transitive = false }
+    compileOnly "org.meteordev:starscript:${project.starscript_version}"
+    modCompileOnly("maven.modrinth:jsmacrosce:${project.jsmacros_version}") { transitive = false }
+
+    // ./gradlew :bridge:runClient / runClientGameTest load both mods; -PnoMeteor / -PnoJsMacros leave one out.
+    // Loom does not unpack Meteor's nested jars (Orbit, Starscript, ...) in dev: take them from its POM instead.
+    if (!project.hasProperty('noMeteor')) modLocalRuntime "meteordevelopment:meteor-client:${project.meteor_version}"
+    if (!project.hasProperty('noJsMacros')) modLocalRuntime("maven.modrinth:jsmacrosce:${project.jsmacros_version}") { transitive = false }
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'llmcraft_version', rootProject.version
+    filteringCharset = 'UTF-8'
+
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version, 'llmcraft_version': rootProject.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = 'UTF-8'
+    it.options.release.set(21)
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+jar {
+    from(rootProject.file('LICENSE')) {
+        rename { "${it}_llmcraft-bridge" }
+    }
+}
+
+// In-game tests with Meteor + JsMacros loaded: ./gradlew :bridge:runClientGameTest
+fabricApi {
+    configureTests {
+        createSourceSet = true
+        modId = "llmcraft-bridge-gametest"
+        enableGameTests = false
+        enableClientGameTests = true
+        eula = true
+    }
+}
+
+// The test source set (and its configurations) exists only after configureTests above.
+dependencies {
+    modGametestCompileOnly("meteordevelopment:meteor-client:${project.meteor_version}") { transitive = false }
+    gametestCompileOnly "org.meteordev:starscript:${project.starscript_version}"
+    modGametestCompileOnly("maven.modrinth:jsmacrosce:${project.jsmacros_version}") { transitive = false }
+}

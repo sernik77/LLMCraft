@@ -181,7 +181,7 @@ public final class ChatTools {
     }
 
     /** Waits a moment and returns chat lines that arrived since {@code since}. */
-    static CompletableFuture<String> collectFeedback(long since, long waitMs) {
+    public static CompletableFuture<String> collectFeedback(long since, long waitMs) {
         return CompletableFuture.supplyAsync(() -> {
             StringBuilder sb = new StringBuilder();
             int n = 0;

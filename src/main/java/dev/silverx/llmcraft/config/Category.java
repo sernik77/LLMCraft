@@ -17,7 +17,8 @@ public enum Category {
     BARITONE("Control Baritone pathfinding (if installed)"),
     CLIENT_LOG("Read the client log (logs/latest.log)"),
     VISION("Take screenshots for vision-capable models"),
-    MEMORY("Write long-term memory and notes");
+    MEMORY("Write long-term memory and notes"),
+    SCRIPTS("Run macros and scripts of script mods (JsMacros) - they can do anything a mod can");
 
     public final String description;
 

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "llmcraft-bridge",
+  "version": "${version}",
+  "name": "LLMCraft Bridge",
+  "description": "Connects LLMCraft with Meteor Client (modules, settings, commands, .ai/.llm, HUD variables) and JsMacros CE (macros, services, scripts, the LLM library and LLM* events). Each integration activates only when that mod is installed.",
+  "authors": ["SilverX"],
+  "contact": {},
+  "license": "MIT",
+  "icon": "assets/llmcraft-bridge/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.silverx.llmcraft.bridge.Bridge"],
+    "meteor": ["dev.silverx.llmcraft.bridge.meteor.MeteorBridge"]
+  },
+  "depends": {
+    "fabricloader": ">=0.17.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*",
+    "llmcraft": ">=${llmcraft_version}"
+  },
+  "suggests": {
+    "meteor-client": "*",
+    "jsmacrosce": "*"
+  },
+  "custom": {
+    "meteor-client:color": "120,200,255"
+  }
+}

@@ -2,6 +2,7 @@ package dev.silverx.llmcraft.agent;
 
 import com.google.gson.JsonObject;
 import dev.silverx.llmcraft.LlmCraft;
+import dev.silverx.llmcraft.api.LlmCraftEvents;
 import dev.silverx.llmcraft.config.Category;
 import dev.silverx.llmcraft.config.ConfigManager;
 import dev.silverx.llmcraft.config.LlmConfig;
@@ -40,9 +41,10 @@ import java.util.concurrent.TimeUnit;
 
 /** Runs requests: prompt -> model -> tools -> model ... -> reply. One request at a time, others queue. */
 public final class Agent {
-    public enum Source { USER, TRIGGER }
+    /** USER: typed by the player. TRIGGER: automatic. SCRIPT: another mod/script (an addon API call). Only USER may order attacks on players. */
+    public enum Source { USER, TRIGGER, SCRIPT }
 
-    private record Queued(String text, Source source) {}
+    private record Queued(String text, Source source, CompletableFuture<String> result) {}
 
     private static final Deque<Queued> QUEUE = new ArrayDeque<>();
     private static final int MAX_QUEUE = 5;
@@ -54,52 +56,78 @@ public final class Agent {
         return current != null;
     }
 
-    public static synchronized void submit(String text, Source source) {
-        if (text == null || text.isBlank()) return;
+    public static void submit(String text, Source source) {
+        request(text, source);
+    }
+
+    /**
+     * Queues a request. The future completes with all reply text shown to the player (empty if none) once the request
+     * is done; it fails when the request could not run, failed, or was cancelled.
+     */
+    public static synchronized CompletableFuture<String> request(String text, Source source) {
+        CompletableFuture<String> result = new CompletableFuture<>();
+        if (text == null || text.isBlank()) {
+            result.completeExceptionally(new IllegalArgumentException("empty request"));
+            return result;
+        }
         LlmConfig cfg = ConfigManager.get();
         if (!cfg.enabled) {
             if (source == Source.USER) Output.error("LLMCraft is disabled (/llm enable).");
-            return;
+            result.completeExceptionally(new IllegalStateException("LLMCraft is disabled"));
+            return result;
         }
         if (current != null) {
             if (QUEUE.size() >= MAX_QUEUE) {
                 if (source == Source.USER) Output.error("Busy and the queue is full. Use /llm stop.");
-                return;
+                result.completeExceptionally(new IllegalStateException("busy and the queue is full"));
+                return result;
             }
-            QUEUE.addLast(new Queued(text, source));
+            QUEUE.addLast(new Queued(text, source, result));
             if (source == Source.USER) Output.info("Queued (" + QUEUE.size() + " waiting).");
-            return;
+            return result;
         }
-        start(text, source);
+        start(new Queued(text, source, result));
+        return result;
     }
 
-    private static void start(String text, Source source) {
-        Job job = new Job(text, source);
+    private static void start(Queued q) {
+        Job job = new Job(q.text, q.source, q.result);
         current = job;
         ClientThread.run(job::begin);
     }
 
-    private static synchronized void finished(Job job) {
-        if (current != job) return;
-        current = null;
-        Queued next = QUEUE.pollFirst();
-        if (next != null) start(next.text, next.source);
+    private static void finished(Job job) {
+        synchronized (Agent.class) {
+            if (current == job) {
+                current = null;
+                Queued next = QUEUE.pollFirst();
+                if (next != null) start(next);
+            }
+        }
+        job.settle();
     }
 
     /** Stops the running request, the queue, pending approvals and every AI-held key/task. */
     public static void cancel(String reason) {
         Job job;
+        List<Queued> dropped;
         synchronized (Agent.class) {
+            dropped = new ArrayList<>(QUEUE);
             QUEUE.clear();
             job = current;
             current = null;
         }
+        for (Queued q : dropped) q.result.completeExceptionally(new java.util.concurrent.CancellationException(reason));
         Approvals.denyAll();
-        if (job != null) job.cancelled = true;
+        if (job != null) {
+            job.cancelled = true;
+            job.settle();
+        }
         ClientThread.run(() -> {
             Controller.stopAll(reason);
             if (job != null && job.usedBaritone) BaritoneBridge.cancel();
         });
+        LlmCraftEvents.cancelled(reason);
     }
 
     public static synchronized String status() {
@@ -113,6 +141,10 @@ public final class Agent {
     private static final class Job {
         final String input;
         final Source source;
+        final CompletableFuture<String> result;
+        /** Why the request failed (null while fine). */
+        volatile String error;
+        volatile boolean started;
         final long startedAt = System.currentTimeMillis();
         volatile boolean cancelled;
         volatile boolean usedBaritone;
@@ -143,9 +175,22 @@ public final class Agent {
         volatile String notes = "";
         final StringBuilder shownText = new StringBuilder();
 
-        Job(String input, Source source) {
+        Job(String input, Source source, CompletableFuture<String> result) {
             this.input = input;
             this.source = source;
+            this.result = result;
+        }
+
+        /** Completes the caller's future (once) and tells listeners how it went. */
+        void settle() {
+            String reply;
+            synchronized (shownText) {
+                reply = shownText.toString().trim();
+            }
+            String outcome = cancelled ? "cancelled" : error != null ? "error" : "done";
+            boolean first = cancelled ? result.completeExceptionally(new java.util.concurrent.CancellationException("request cancelled"))
+                    : error != null ? result.completeExceptionally(new IllegalStateException(error)) : result.complete(reply);
+            if (first && started) LlmCraftEvents.requestFinished(input, source, reply, outcome);
         }
 
         /** Client thread: snapshot everything the request needs. */
@@ -155,6 +200,7 @@ public final class Agent {
                 world = Stores.current();
                 if (!world.settings().enabled) {
                     if (source == Source.USER) Output.error("The AI is disabled for this world/server (/llm world enable).");
+                    error = "the AI is disabled for this world/server";
                     finished(this);
                     return;
                 }
@@ -162,12 +208,14 @@ public final class Agent {
                 profile = profileName != null && !profileName.isBlank() ? cfg.profile(profileName) : cfg.activeProfile();
                 if (profile == null) {
                     Output.error("No provider profile configured. Edit config/llmcraft/config.json.");
+                    error = "no provider profile configured";
                     finished(this);
                     return;
                 }
                 String keyProblem = keyProblem(profile);
                 if (keyProblem != null) {
                     Output.error(keyProblem);
+                    error = keyProblem;
                     finished(this);
                     return;
                 }
@@ -188,26 +236,30 @@ public final class Agent {
                 // The volatile part (state, chat) goes last so the cached prefix stays valid.
                 request.messages.add(Message.user(fresh ? workMessage(null) : input + "\n\n" + PromptBuilder.stateBlock(cfg, world)));
                 ACTIVE = this;
+                started = true;
+                LlmCraftEvents.requestStarted(input, source);
                 int needed = (system.length() + toolChars + input.length()) / PromptBuilder.CHARS_PER_TOKEN;
                 if (needed > profile.contextTokens * 0.9 && !warnedContext) {
                     warnedContext = true;
                     Output.error("Prompt (~" + needed + " tokens incl. " + request.tools.size() + " tools) is close to the context window of '"
                             + profile.name + "' (" + profile.contextTokens + "). Raise contextTokens or turn off unused permission categories.");
                 }
-                if (source == Source.USER) Output.info("thinking… (" + profile.name + ")");
+                if (source != Source.TRIGGER) Output.info("thinking… (" + profile.name + ")");
                 loop().orTimeout(cfg.agent.requestTimeoutSeconds, TimeUnit.SECONDS)
                         .whenComplete((v, t) -> {
                             if (t != null && !cancelled) {
                                 Throwable c = t instanceof CompletionException && t.getCause() != null ? t.getCause() : t;
                                 LlmCraft.LOGGER.warn("Request failed", c);
                                 String msg = c instanceof java.util.concurrent.TimeoutException ? "request timed out" : c.getMessage();
-                                Output.error("Error: " + (msg == null ? c.getClass().getSimpleName() : msg));
+                                error = msg == null ? c.getClass().getSimpleName() : msg;
+                                Output.error("Error: " + error);
                             }
                             finished(this);
                         });
             } catch (Throwable t) {
                 LlmCraft.LOGGER.error("Could not start request", t);
                 Output.error("Could not start: " + t.getMessage());
+                error = "could not start: " + t.getMessage();
                 finished(this);
             }
         }
@@ -314,6 +366,7 @@ public final class Agent {
             }).thenCompose(gate -> {
                 if (gate.error != null) {
                     actionLog.add(tool.name + " (refused)");
+                    LlmCraftEvents.toolCalled(tool.name, gate.summary, "refused: " + gate.error, true);
                     return CompletableFuture.completedFuture(ToolResult.error(gate.error));
                 }
                 CompletableFuture<Boolean> approved = gate.ask
@@ -324,6 +377,7 @@ public final class Agent {
                     if (!ok) {
                         actionLog.add(gate.summary + " (denied)");
                         Output.tool("denied: " + gate.summary);
+                        LlmCraftEvents.toolCalled(tool.name, gate.summary, "denied by the player", true);
                         return CompletableFuture.completedFuture(ToolResult.error("the player denied this action"));
                     }
                     if (cfg.chat.showToolCalls) Output.tool(gate.summary);
@@ -343,6 +397,7 @@ public final class Agent {
                             r = ToolResult.error(c.getMessage() == null ? c.toString() : c.getMessage());
                         }
                         actionLog.add(gate.summary + (r.error ? " -> " + abbreviate(r.text, 80) : ""));
+                        LlmCraftEvents.toolCalled(tool.name, gate.summary, r.text, r.error);
                         return r;
                     }).thenCompose(r -> ClientThread.call(() -> {
                         // What changed and where things stand, so the model does not have to guess or look.
@@ -392,7 +447,8 @@ public final class Agent {
          */
         String workMessage(String extra) {
             StringBuilder sb = new StringBuilder();
-            sb.append(source == Source.USER ? "Request from your player: " : "[automatic trigger] ").append(input).append("\n\n");
+            sb.append(source == Source.USER ? "Request from your player: " : source == Source.SCRIPT ? "[request from your player's script/mod] " : "[automatic trigger] ")
+                    .append(input).append("\n\n");
             if (!notes.isBlank()) sb.append("## Your notes (task_notes)\n").append(notes.trim()).append("\n\n");
             if (pinnedPlan != null) sb.append("## Your plan (from the plan tool)\n").append(pinnedPlan.trim()).append("\n\n");
             if (!stepLog.isEmpty()) {
@@ -470,7 +526,8 @@ public final class Agent {
                 denied = e.getMessage();
             }
             if (denied != null) return new Gate(denied, false, cat, summary);
-            boolean ask = mode == PermissionMode.ASK && !Approvals.sessionAllowed(cat) && !Boolean.TRUE.equals(tool.autoAllow.apply(toolCtx, args));
+            boolean ask = mode == PermissionMode.ASK && !Approvals.sessionAllowed(cat) && !Boolean.TRUE.equals(tool.autoAllow.apply(toolCtx, args))
+                    || Boolean.TRUE.equals(tool.alwaysAsk.apply(toolCtx, args));
             return new Gate(null, ask, cat, summary);
         }
 
@@ -479,8 +536,11 @@ public final class Agent {
             String text = resp.text == null ? "" : resp.text.trim();
             if (!text.isEmpty() && !isSilent(text)) {
                 for (String line : text.split("\n+")) if (!line.isBlank()) Output.reply(plain(line.trim()));
-                if (!shownText.isEmpty()) shownText.append('\n');
-                shownText.append(text);
+                synchronized (shownText) {
+                    if (!shownText.isEmpty()) shownText.append('\n');
+                    shownText.append(text);
+                }
+                LlmCraftEvents.reply(text);
             }
             if (resp.promptTokens >= 0) LlmCraft.LOGGER.info("[llm] step {}: prompt {} tok, prefill {} ms, output {} tok", step, resp.promptTokens, resp.promptMillis, resp.completionTokens);
             if (cfg.chat.showTokenUsage && resp.promptTokens >= 0) Output.info("tokens: " + resp.promptTokens + " in / " + resp.completionTokens + " out"
@@ -489,7 +549,7 @@ public final class Agent {
 
         void complete(String finalText) {
             if (cancelled) return;
-            String userText = source == Source.USER ? input : "[automatic trigger] " + input;
+            String userText = source == Source.USER ? input : source == Source.SCRIPT ? "[script] " + input : "[automatic trigger] " + input;
             String assistant = shownText.toString().trim();
             if (cfg.agent.keepToolSummariesInHistory && !actionLog.isEmpty()) {
                 assistant = (assistant + "\n[actions: " + abbreviate(String.join("; ", actionLog), 700) + "]").trim();

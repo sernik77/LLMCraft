@@ -44,7 +44,7 @@ public final class ChatLog {
      */
     public static synchronized void addFromHud(String text) {
         if (text == null || text.isBlank()) return;
-        boolean known = false;
+        boolean known = CAPTURE_ALL.get() > 0;
         for (String p : MOD_PREFIXES) known |= text.startsWith(p);
         if (!known) return;
         long now = System.currentTimeMillis();
@@ -55,6 +55,17 @@ public final class ChatLog {
             if (l.text().equals(text)) return;
         }
         add(Kind.MOD, null, text);
+    }
+
+    private static final java.util.concurrent.atomic.AtomicInteger CAPTURE_ALL = new java.util.concurrent.atomic.AtomicInteger();
+
+    /**
+     * While at least one caller has this on, every line printed into the chat HUD is recorded, not only the known mod
+     * prefixes (e.g. while a script the AI started runs, so its output reaches the tool result). Pair on/off calls.
+     */
+    public static void captureAll(boolean on) {
+        if (on) CAPTURE_ALL.incrementAndGet();
+        else CAPTURE_ALL.updateAndGet(v -> Math.max(0, v - 1));
     }
 
     /** Client mods whose HUD output is captured (it is tool feedback, not chat). */

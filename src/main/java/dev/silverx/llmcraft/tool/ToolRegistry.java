@@ -18,10 +18,12 @@ import java.util.List;
 /** All tools. Other mods can add their own through {@link #register(Tool)} (see README). */
 public final class ToolRegistry {
     private static final List<Tool> TOOLS = new ArrayList<>();
+    /** Tools added by other mods; kept when the built-in ones are (re)created, whichever mod initializes first. */
+    private static final List<Tool> EXTRA = new ArrayList<>();
 
     private ToolRegistry() {}
 
-    public static void init() {
+    public static synchronized void init() {
         TOOLS.clear();
         ChatTools.register(TOOLS);
         InfoTools.register(TOOLS);
@@ -33,10 +35,16 @@ public final class ToolRegistry {
         ModTools.register(TOOLS);
         MemoryTools.register(TOOLS);
         VisionTools.register(TOOLS);
+        for (Tool t : EXTRA) {
+            TOOLS.removeIf(x -> x.name.equals(t.name));
+            TOOLS.add(t);
+        }
     }
 
     /** Public extension point for addon mods. */
     public static synchronized void register(Tool tool) {
+        EXTRA.removeIf(t -> t.name.equals(tool.name));
+        EXTRA.add(tool);
         TOOLS.removeIf(t -> t.name.equals(tool.name));
         TOOLS.add(tool);
     }

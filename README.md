@@ -16,8 +16,9 @@ LLMCraft podłącza dowolny model językowy do klienta gry: model czyta czat, ś
 | Fabric API | wymagane |
 | Mod Menu + Cloth Config | opcjonalne — ekran ustawień |
 | Baritone (także fork Meteora) | opcjonalne — narzędzie `baritone` |
+| Meteor Client, JsMacros CE | opcjonalne — przez addon **LLMCraft Bridge** (niżej) |
 
-Skopiuj `build/libs/llmcraft-1.3.0.jar` do folderu `mods` (usuń starszą wersję).
+Skopiuj `build/libs/llmcraft-1.4.0.jar` do folderu `mods` (usuń starszą wersję). Integracja z Meteorem i JsMacros to osobny jar: `bridge/build/libs/llmcraft-bridge-1.0.0.jar`.
 
 ## Szybki start (lokalna Ollama)
 
@@ -91,6 +92,7 @@ Nowy profil z poziomu gry (indeks = liczba istniejących profili, domyślnie 6):
 | `client_log` | `logs/latest.log` | ALLOW | ALLOW |
 | `vision` | zrzuty ekranu (tylko profile z `vision: true`) | ALLOW | ALLOW |
 | `memory` | zapis do pamięci | ALLOW | ALLOW |
+| `scripts` | uruchamianie makr i skryptów (JsMacros, przez addon) | ASK | ASK |
 
 - `/llm perms` — lista z klikalnym przełączaniem.
 - `/llm perm <kategoria> <off|ask|allow> [world|singleplayer|multiplayer|all]`.
@@ -183,6 +185,55 @@ Pełny ekran ustawień: Mod Menu → LLMCraft (wymaga Cloth Config).
 - Limity: minimalny odstęp między wiadomościami, maks. liczba wiadomości na zapytanie, maks. długość, usuwanie niedozwolonych znaków (chroni przed kickiem).
 - Plik `config/llmcraft/config.json` (klucze API) i pliki o nazwach typu *token/account/secret* nie są udostępniane modelowi; z logu wycinane są tokeny.
 
+## Addon: LLMCraft Bridge (Meteor Client + JsMacros CE)
+
+Osobny mod (`bridge/`, jar `llmcraft-bridge-1.0.0.jar`), wymaga LLMCraft ≥ 1.4.0. Działa z samym Meteorem, z samym JsMacros, z oboma albo bez żadnego — każda integracja włącza się tylko wtedy, gdy dany mod jest zainstalowany. JsMacros: wersja **Community Edition** (`jsmacrosce`); oryginalnego JsMacros (`xyz.wagyourtail`) nie ma dla 1.21.11.
+
+### Meteor Client
+**AI → Meteor** — narzędzie `meteor` (bezpośrednio przez API Meteora, nie przez czat, więc model dostaje prawdziwe błędy):
+- `modules` (lista; `filter` = słowo, kategoria albo `active`), `info` (opis i wszystkie ustawienia z wartościami i dozwolonymi wartościami),
+- `enable` / `disable` / `toggle`, `set` (moduł + ustawienie + wartość w formacie Meteora), `reset` (ustawienie do domyślnego),
+- `commands` (lista komend; `filter` = nazwa komendy → pełna składnia), `command` (dowolna komenda Meteora bez prefiksu: `friends add Steve`, `macro <nazwa>`, `waypoint list`…; błędna składnia zwraca użycie).
+- Uprawnienia: odczyt (`modules`, `info`, `commands`) = `mods`; zmiany = `client_commands` (domyślnie ASK); `.say` liczy się jako `chat_send`. Moduły w multiplayerze to ryzyko anticheatu — zostaw ASK.
+- Zawsze zablokowane: `.reset` i `.swarm` (lista w `bridge.json`), `toggle all`, własne `.ai`/`.llm`. Moduły, których AI ma nie ruszać: `meteor.blockedModules`.
+
+**Meteor → AI**:
+- `.ai <wiadomość>` (= `/ai`), `.llm <…>` (= `/llm`: `.llm stop`, `.llm perms`, `.llm profile claude`…).
+- Kategoria modułów **LLMCraft**: `llm-triggers` (automatyczne wyzwalacze — ten sam przełącznik co `/llm triggers`, więc można mu dać klawisz w Meteorze) i `llm-guard` (gdy AI pracuje, wyłącza wskazane moduły — domyślnie Freecam i AutoWalk, które przejmują ruch — i włącza je z powrotem po zakończeniu).
+- Zmienne Starscript do HUD-u (element *Text*): `{llm.status}`, `{llm.busy}`, `{llm.enabled}`, `{llm.profile}`, `{llm.model}`, `{llm.reply}` (ostatnia odpowiedź), `{llm.tool}` (ostatnie narzędzie), `{llm.tokens}`.
+
+### JsMacros CE
+**AI → makra** — narzędzie `jsmacros`:
+- `list` (makra z klawiszem/zdarzeniem, serwisy, pliki skryptów, uruchomione skrypty), `read` (kod skryptu — model sprawdza, co makro robi),
+- `run` (uruchamia skrypt z folderu makr i czeka; skrypt dostaje `args`, oddaje wynik przez `LLM.setResult(x)`; model widzi wynik, błąd i wszystko, co skrypt wypisał przez `Chat.log`), `running`, `stop` (`all` = wszystkie uruchomione przez AI),
+- `event` (odpala własne zdarzenie, czyli makra do niego przypięte; wbudowanych zdarzeń JsMacros nie da się podrobić), `enable` / `disable` (makro po pliku), `service_start` / `service_stop` / `service_restart`.
+- Uprawnienia: odczyt = `mods`, reszta = nowa kategoria `scripts` (domyślnie ASK). **End / `/llm stop` zabija też skrypty uruchomione przez AI.**
+- `code` — AI pisze i uruchamia własny kod. **Domyślnie wyłączone** (`jsmacros.allowInlineCode` w `bridge.json`), a po włączeniu każde wywołanie i tak wymaga Twojej zgody (także przy ALLOW i „Always this session”). Kod JsMacros ma pełny dostęp do gry i plików — także do kluczy API w `config.json`.
+
+**Makra → AI** — biblioteka `LLM` w każdym skrypcie:
+```js
+LLM.submit("wykop 10 rudy żelaza")                           // jak /ai, bez czekania
+LLM.ask("co zbudować?", JavaWrapper.methodToJavaAsync((reply, error) => Chat.log(reply ?? error)))
+const r = LLM.askAndWait("gdzie jest najbliższa wioska?")    // blokuje tylko ten skrypt
+LLM.runTool("craft", '{"item":"stone_pickaxe"}')             // dowolne narzędzie LLMCraft bez modelu
+LLM.runToolAsync("mine", '{"block":"iron_ore","count":5}', JavaWrapper.methodToJavaAsync((text, isError) => Chat.log(text)))
+LLM.isBusy(); LLM.status(); LLM.stop(); LLM.tools()
+if (LLM.isAiCall()) LLM.setResult("zrobione: " + LLM.getArgs())   // skrypt uruchomiony przez AI
+```
+- Prośby ze skryptów mają źródło `SCRIPT`: w historii widać `[script]`, a graczy model może atakować tylko na Twoje bezpośrednie polecenie (makro przypięte do czatu dałoby się podpuścić).
+- `runTool` pomija pytania o zgodę (to Twój skrypt), ale kategorie ustawione na OFF zostają wyłączone, a blokady narzędzi działają.
+- `askAndWait` nie działa na wątku gry (makra „joined”) ani w skrypcie, na który AI właśnie czeka (oba by się zakleszczyły) — wtedy od razu rzuca wyjątek z podpowiedzią.
+
+**Zdarzenia dla makr** (wybierasz je w GUI JsMacros jak każde inne): `LLMRequest` (`prompt`, `source`), `LLMReply` (`text`), `LLMTool` (`tool`, `summary`, `result`, `error`), `LLMDone` (`prompt`, `source`, `reply`, `outcome`: done/error/cancelled), `LLMStop` (`reason`), `LLMCall` (skrypty uruchamiane przez AI). Przykład makra na `LLMDone`: `Chat.toast("AI", event.getString("reply"))`.
+
+### `config/llmcraft/bridge.json`
+```json
+{
+  "meteor":   { "blockedCommands": ["reset", "swarm"], "blockedModules": [] },
+  "jsmacros": { "allowInlineCode": false, "runTimeoutSeconds": 60, "askTimeoutSeconds": 300, "fireEvents": true }
+}
+```
+
 ## Dla twórców addonów
 
 ```java
@@ -192,12 +243,23 @@ ToolRegistry.register(Tool.builder("my_tool", Category.MODS, "Opis dla modelu")
         .build());
 ```
 
+- Narzędzia z `ToolRegistry.register` zostają po inicjalizacji LLMCraft niezależnie od kolejności ładowania modów.
+- `.alwaysAsk((ctx, args) -> …)` — wywołania, które gracz musi zatwierdzić zawsze (nawet przy ALLOW).
+- `LlmCraftApi.ask(prompt, Agent.Source.SCRIPT)` → `CompletableFuture<String>` z odpowiedzią; `LlmCraftApi.runTool(nazwa, args)`, `busy()`, `status()`, `stop()`.
+- `LlmCraftEvents.register(listener)` — `requestStarted`, `toolCalled`, `reply`, `requestFinished`, `cancelled` (tu zatrzymaj wszystko, co uruchomiłeś dla AI).
+- `ChatLog.captureAll(true/false)` — tymczasowo zapisuje każdą linię czatu HUD (np. wyjście skryptu), nie tylko `[Baritone]`/`[Meteor]`.
+
+Pełny przykład: addon w `bridge/`.
+
 ## Budowanie i testy
 
 ```
 ./gradlew build               # jar w build/libs/
 ./gradlew test                # testy formatów providerów (na żywo z lokalną Ollamą, jeśli działa)
 ./gradlew runClientGameTest   # test w prawdziwym kliencie MC (otwiera okno gry)
+./gradlew :bridge:build                                       # addon: bridge/build/libs/llmcraft-bridge-1.0.0.jar
+./gradlew :bridge:runClientGameTest                           # addon w kliencie z Meteorem i JsMacros (+ Ollama, jeśli działa)
+./gradlew :bridge:runClientGameTest -PnoMeteor -PnoJsMacros   # bez jednego lub obu modów
 ```
 
 Zmienne testów: `LLMCRAFT_TEST_MODEL` (domyślnie `qwen3.5:4b`), `LLMCRAFT_TEST_OLLAMA`.

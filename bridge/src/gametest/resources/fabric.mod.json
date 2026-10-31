@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "llmcraft-bridge-gametest",
+  "version": "1.0.0",
+  "name": "LLMCraft Bridge runtime tests",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-client-gametest": ["dev.silverx.llmcraft.bridge.gametest.BridgeClientGameTest"]
+  },
+  "depends": { "llmcraft-bridge": "*" }
+}

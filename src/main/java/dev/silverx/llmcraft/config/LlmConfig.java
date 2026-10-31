@@ -177,7 +177,7 @@ public final class LlmConfig {
         return switch (c) {
             case CHAT_READ, WORLD_READ, PLAYER_READ, SCREEN, MOVEMENT, MODS, CLIENT_LOG, VISION, MEMORY -> PermissionMode.ALLOW;
             case CHAT_SEND, INVENTORY, INTERACTION, BARITONE -> multiplayer ? PermissionMode.ASK : PermissionMode.ALLOW;
-            case COMMANDS, CLIENT_COMMANDS, KEYBINDS -> PermissionMode.ASK;
+            case COMMANDS, CLIENT_COMMANDS, KEYBINDS, SCRIPTS -> PermissionMode.ASK;
         };
     }
 
