@@ -279,6 +279,17 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
                 ctx.waitTicks(20);
                 assertTrue(!dev.silverx.llmcraft.game.BaritoneBridge.isBusy(), "Baritone still running after mine finished");
                 check(ctx, "baritone", "{\"command\":\"goto " + (p1[0] + 3) + " " + p1[1] + " " + p1[2] + "\",\"timeout_seconds\":30}", "baritone 'goto");
+                check(ctx, "baritone", "{\"command\":\"help\"}", "goto");
+                check(ctx, "baritone", "{\"command\":\"help waypoints\"}", "wp");
+                check(ctx, "baritone", "{\"command\":\"get allowBreak\"}", "allowBreak = ");
+                check(ctx, "baritone", "{\"command\":\"set allowBreak false\"}", "allowBreak = false");
+                check(ctx, "baritone", "{\"command\":\"set allowBreak true\"}", "allowBreak = true");
+                check(ctx, "baritone", "{\"command\":\"waypoints save user testspot\"}", "baritone");
+                // use_block far away: Baritone walks to the nearest one of the matching types (one type per goto)
+                sp.getServer().runCommand("setblock " + (p1[0] + 10) + " " + p1[1] + " " + p1[2] + " minecraft:red_bed[facing=east,part=foot]");
+                sp.getServer().runCommand("setblock " + (p1[0] + 11) + " " + p1[1] + " " + p1[2] + " minecraft:red_bed[facing=east,part=head]");
+                ctx.waitTicks(10);
+                check(ctx, "use_block", "{\"block\":\"bed\"}", "red_bed");
             }
 
             // Portal in one call: frame with filler corners, lit.

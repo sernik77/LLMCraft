@@ -29,7 +29,7 @@ public final class Combat {
         String q = query == null ? "hostiles" : query.trim().toLowerCase(Locale.ROOT).replaceFirst("^minecraft:", "");
         if (q.isEmpty() || q.equals("hostiles") || q.equals("monsters") || q.equals("mobs")) {
             return e -> e instanceof net.minecraft.world.entity.monster.Enemy && !(e instanceof net.minecraft.world.entity.monster.EnderMan)
-                    && !(e instanceof net.minecraft.world.entity.monster.zombie.ZombifiedPiglin);
+                    && !(e instanceof net.minecraft.world.entity.monster.zombie.ZombifiedPiglin) && !(e instanceof net.minecraft.world.entity.monster.piglin.Piglin);
         }
         if (q.startsWith("player:")) {
             String name = q.substring(7).trim();

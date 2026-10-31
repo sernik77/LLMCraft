@@ -74,7 +74,7 @@ public final class Snapshot {
         if (BaritoneBridge.available()) sb.append(" | baritone ").append(BaritoneBridge.isBusy() ? "BUSY" : "idle");
         String threats = Danger.summary(mc);
         if (threats != null) sb.append(" | ").append(threats);
-        String stuck = Stuck.diagnose(mc);
+        String stuck = Stuck.trapped(mc);
         if (stuck != null) sb.append(" | ").append(stuck);
         if (mc.screen != null) sb.append(" | screen ").append(screenName(mc.screen));
         return sb.toString();

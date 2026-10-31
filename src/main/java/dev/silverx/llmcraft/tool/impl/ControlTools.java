@@ -246,7 +246,10 @@ public final class ControlTools {
                     if (!BaritoneBridge.available() || dev.silverx.llmcraft.agent.Permissions.mode(Category.BARITONE, ctx.world) == dev.silverx.llmcraft.config.PermissionMode.OFF) {
                         return err("no " + q + " within reach (find_blocks shows where one is, then walk_to it)");
                     }
-                    String names = String.join(" ", ids);
+                    // Baritone's goto takes one block type: use the type of the nearest matching block that is loaded.
+                    BlockPos far = nearestBlock(ids, Math.min(48, ctx.config.context.maxScanRadius));
+                    if (far == null) return err("no " + q + " within " + Math.min(48, ctx.config.context.maxScanRadius) + " blocks");
+                    String names = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(mc().level.getBlockState(far).getBlock()).getPath();
                     try {
                         if (!BaritoneBridge.execute("goto " + names)) return err("Baritone did not accept 'goto " + names + "'");
                     } catch (Throwable t) {
@@ -315,6 +318,27 @@ public final class ControlTools {
                     });
                 }).build());
 
+    }
+
+    /** Nearest loaded block whose id is in {@code ids}, within {@code r} blocks (nearer layers first), or null. */
+    static BlockPos nearestBlock(java.util.Set<String> ids, int r) {
+        var level = mc().level;
+        BlockPos c = mc().player.blockPosition();
+        BlockPos best = null;
+        double bestD = Double.MAX_VALUE;
+        BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+        for (int x = -r; x <= r; x++)
+            for (int z = -r; z <= r; z++)
+                for (int y = -Math.min(r, 24); y <= Math.min(r, 24); y++) {
+                    double d = x * x + y * y + z * z;
+                    if (d >= bestD) continue;
+                    m.set(c.getX() + x, c.getY() + y, c.getZ() + z);
+                    if (ids.contains(net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(level.getBlockState(m).getBlock()).getPath())) {
+                        bestD = d;
+                        best = m.immutable();
+                    }
+                }
+        return best;
     }
 
     /** Right click (or one short left click on) a block; reports what changed: a screen that opened or the block's new state. */

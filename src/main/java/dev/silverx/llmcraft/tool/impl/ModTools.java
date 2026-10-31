@@ -197,7 +197,7 @@ public final class ModTools {
     }
 
     /** Commands that keep running until 'stop' (the tool does not wait for them by default). */
-    private static final java.util.Set<String> CONTINUOUS = java.util.Set.of("follow", "explore", "farm", "elytra", "explorefilter");
+    private static final java.util.Set<String> CONTINUOUS = java.util.Set.of("follow", "explore", "farm", "elytra", "explorefilter", "tunnel");
     /** Commands that answer right away (lists, toggles, waypoints). */
     private static final java.util.Set<String> INSTANT = java.util.Set.of("stop", "cancel", "pause", "resume", "proc", "eta", "waypoints", "waypoint", "wp",
             "sethome", "sel", "render", "gc", "reloadall", "saveall", "version", "blacklist", "invert", "repack", "find", "help", "goal", "forcecancel");

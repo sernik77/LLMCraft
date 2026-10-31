@@ -30,13 +30,13 @@ public final class Danger {
     private static int tick;
     private static long lastReflexAt;
 
-    /** Hostile mobs within the radius, nearest first (endermen and zombified piglins are neutral and left out). */
+    /** Hostile mobs within the radius, nearest first (endermen, piglins and zombified piglins are neutral and left out). */
     public static List<LivingEntity> hostiles(Minecraft mc, double radius) {
         var p = mc.player;
         List<LivingEntity> out = new ArrayList<>();
         for (Entity e : mc.level.entitiesForRendering()) {
             if (!(e instanceof LivingEntity le) || !le.isAlive() || !(e instanceof Enemy)) continue;
-            if (e instanceof EnderMan || e instanceof ZombifiedPiglin) continue;
+            if (e instanceof EnderMan || e instanceof ZombifiedPiglin || e instanceof net.minecraft.world.entity.monster.piglin.Piglin) continue;
             if (e.distanceTo(p) <= radius) out.add(le);
         }
         out.sort(Comparator.comparingDouble(e -> e.distanceTo(p)));

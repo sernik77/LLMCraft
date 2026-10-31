@@ -99,6 +99,6 @@ public final class Unstuck {
         } catch (Throwable t) {
             return CompletableFuture.completedFuture(Script.FAILED + "Baritone failed: " + t.getMessage());
         }
-        return Controller.run(Mining.baritoneWatch("escaping to " + spot.toShortString(), () -> mc().player.blockPosition().closerThan(spot, 1.5), null), 20 * 15);
+        return Controller.run(Mining.baritoneWatch("escaping to " + spot.toShortString(), () -> mc().player.blockPosition().equals(spot) && mc().player.onGround(), null), 20 * 15);
     }
 }

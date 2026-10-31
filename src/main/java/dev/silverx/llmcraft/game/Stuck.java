@@ -79,6 +79,18 @@ public final class Stuck {
         return out.isEmpty() ? null : String.join(", ", out);
     }
 
+    /** Only the diagnoses that really hold the player (for the status line); dead ends and swimming are normal. */
+    public static String trapped(Minecraft mc) {
+        String d = diagnose(mc);
+        if (d == null) return null;
+        List<String> keep = new ArrayList<>();
+        for (String part : d.split(", ")) {
+            if (part.contains("buried") || part.contains("cobweb") || part.contains("inside a block") || part.contains("powder snow")
+                    || part.contains("hole") && !part.contains("open sky")) keep.add(part);
+        }
+        return keep.isEmpty() ? null : String.join(", ", keep);
+    }
+
     private static boolean blocked(BlockPos pos) {
         var level = Minecraft.getInstance().level;
         return !level.getBlockState(pos).getCollisionShape(level, pos).isEmpty();
@@ -114,7 +126,10 @@ public final class Stuck {
             @Override
             public String tick(Minecraft mc) {
                 var p = mc.player;
-                if (Double.isNaN(startY)) startY = p.getY();
+                if (Double.isNaN(startY)) {
+                    if (!p.onGround()) return null; // measure from the ground, not mid-air
+                    startY = p.getY();
+                }
                 if (++age > 20 * 6) return Script.FAILED + "pillaring timed out after " + placed + " block(s)";
                 if (placed >= height && p.onGround()) return "pillared up " + placed + " block(s)";
                 int slot = throwaway();
