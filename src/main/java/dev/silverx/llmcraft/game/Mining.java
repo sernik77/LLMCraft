@@ -86,11 +86,13 @@ public final class Mining {
      * Supervises a running Baritone process. Finishes when {@code done} holds (Baritone is then stopped),
      * when Baritone has been idle for 2 s, or fails when Baritone keeps reporting that it cannot path.
      */
-    public static Controller.Task baritoneWatch(String label, BooleanSupplier done) {
+    public static Controller.Task baritoneWatch(String label, BooleanSupplier done, java.util.function.IntSupplier progress) {
         long started = System.currentTimeMillis();
         return new Controller.Task() {
             int age;
             int idle;
+            int lastProgress = progress == null ? 0 : progress.getAsInt();
+            long progressAt = started;
 
             @Override
             public String tick(Minecraft mc) {
@@ -100,13 +102,18 @@ public final class Mining {
                     return "goal reached";
                 }
                 if (age < 20) return null;
+                if (progress != null && progress.getAsInt() != lastProgress) {
+                    lastProgress = progress.getAsInt();
+                    progressAt = System.currentTimeMillis();
+                }
+                // Baritone blacklists a few unreachable targets on its own; give up only when it keeps failing without progress.
                 int noPath = 0;
-                for (String l : ChatLog.since(started, "[Baritone]")) {
+                for (String l : ChatLog.since(progressAt, "[Baritone]")) {
                     if (l.contains("Unable to find any path") || l.contains("No locations for") || l.contains("No goal")) noPath++;
                 }
-                if (noPath >= 3) {
+                if (noPath >= 5) {
                     BaritoneBridge.cancel();
-                    return Script.FAILED + "Baritone cannot reach a target (it reported " + noPath + " path failures)";
+                    return Script.FAILED + "Baritone cannot reach a target (it reported " + noPath + " path failures in a row)";
                 }
                 idle = BaritoneBridge.isBusy() ? 0 : idle + 1;
                 return idle >= 40 ? "Baritone stopped on its own" : null;

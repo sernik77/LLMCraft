@@ -75,6 +75,13 @@ public final class Crafting {
 
     private static Map<Item, List<Recipe>> index;
     private static long indexBuiltAt;
+    /** Use the integrated server's full recipe list in singleplayer (tests turn it off to act like multiplayer). */
+    public static boolean useServerRecipes = true;
+
+    /** Forget the cached recipe index (crafting unlocks new recipe book entries). */
+    public static void invalidate() {
+        index = null;
+    }
 
     /** Crafting recipes that produce the item; recipe book ones first. */
     public static List<Recipe> recipesFor(Item item) {
@@ -99,7 +106,7 @@ public final class Crafting {
                 }
             }
             // Singleplayer: the integrated server knows every recipe, including ones not unlocked yet.
-            var server = mc().getSingleplayerServer();
+            var server = useServerRecipes ? mc().getSingleplayerServer() : null;
             if (server != null) {
                 for (var holder : server.getRecipeManager().getRecipes()) {
                     if (!(holder.value() instanceof CraftingRecipe cr)) continue;
@@ -162,7 +169,7 @@ public final class Crafting {
 
     public static Plan plan(Item target, int count) {
         boolean tableNear = Inv.findInReach(TABLE) != null;
-        Planner pl = new Planner();
+        Planner pl = new Planner(target);
         List<String> missing = new ArrayList<>();
         if (!pl.consume(target, count, 0, new HashSet<>(), missing)) {
             return new Plan(List.of(), false, missingText(target, missing));
@@ -170,7 +177,7 @@ public final class Crafting {
         boolean needsTable = pl.jobs.stream().anyMatch(j -> !j.recipe.fits2x2());
         if (needsTable && !tableNear && Inv.count(Items.CRAFTING_TABLE) <= 0) {
             // Craft (and later place) a table first, then plan the target with what is left.
-            Planner withTable = new Planner();
+            Planner withTable = new Planner(target);
             List<String> m2 = new ArrayList<>();
             if (!withTable.consume(Items.CRAFTING_TABLE, 1, 0, new HashSet<>(), m2)) {
                 return new Plan(List.of(), true, "needs a crafting table and cannot make one: " + missingText(Items.CRAFTING_TABLE, m2));
@@ -196,11 +203,12 @@ public final class Crafting {
         final Map<Item, Integer> sim = new HashMap<>();
         final List<Job> jobs = new ArrayList<>();
 
-        Planner() {
+        /** {@code target}: the item being asked for - copies already in the inventory do not count. */
+        Planner(Item target) {
             var inv = mc().player.getInventory();
             for (int i = 0; i < 36; i++) {
                 ItemStack s = inv.getItem(i);
-                if (!s.isEmpty()) sim.merge(s.getItem(), s.getCount(), Integer::sum);
+                if (!s.isEmpty() && s.getItem() != target) sim.merge(s.getItem(), s.getCount(), Integer::sum);
             }
         }
 
@@ -455,6 +463,7 @@ public final class Crafting {
         s.then(() -> {
             if (s.openedMenu() != null && mc().player.containerMenu == s.openedMenu()) mc().player.closeContainer();
             s.guard(null);
+            invalidate();
             String list = made.entrySet().stream().map(e -> e.getValue() + " " + e.getKey()).collect(Collectors.joining(", "));
             s.note(list.isEmpty() ? "nothing crafted" : "crafted " + list);
         });

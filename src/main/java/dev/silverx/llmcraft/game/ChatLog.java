@@ -9,7 +9,8 @@ import java.util.List;
 
 /** Ring buffer of chat and game messages the client received. */
 public final class ChatLog {
-    public enum Kind { PLAYER, SYSTEM, ACTIONBAR, TITLE, SELF }
+    /** MOD = printed by a client mod straight into the HUD; only used as tool feedback, never shown as chat. */
+    public enum Kind { PLAYER, SYSTEM, ACTIONBAR, TITLE, SELF, MOD }
 
     public record Line(long time, Kind kind, String sender, String text) {
         public String format() {
@@ -21,6 +22,7 @@ public final class ChatLog {
                 case ACTIONBAR -> t + " [actionbar] " + text;
                 case TITLE -> t + " [title] " + text;
                 case SYSTEM -> t + " [system] " + text;
+                case MOD -> t + " [mod] " + text;
             };
         }
     }
@@ -41,9 +43,10 @@ public final class ChatLog {
      * Lines that already arrived through the message events, and our own output, are skipped.
      */
     public static synchronized void addFromHud(String text) {
-        if (text == null || text.isBlank() || !text.startsWith("[")) return;
-        String own = dev.silverx.llmcraft.config.ConfigManager.get().chat.displayName;
-        if (text.startsWith("[" + (own == null || own.isBlank() ? "AI" : own) + "]")) return;
+        if (text == null || text.isBlank()) return;
+        boolean known = false;
+        for (String p : MOD_PREFIXES) known |= text.startsWith(p);
+        if (!known) return;
         long now = System.currentTimeMillis();
         var it = LINES.descendingIterator();
         while (it.hasNext()) {
@@ -51,7 +54,17 @@ public final class ChatLog {
             if (now - l.time() > 2000) break;
             if (l.text().equals(text)) return;
         }
-        add(Kind.SYSTEM, null, text);
+        add(Kind.MOD, null, text);
+    }
+
+    /** Client mods whose HUD output is captured (it is tool feedback, not chat). */
+    private static final String[] MOD_PREFIXES = {"[Baritone]", "[Meteor]"};
+
+    /** All lines (every kind, incl. mod HUD output) received since {@code since} (ms), oldest first. */
+    public static synchronized List<Line> linesSince(long since) {
+        List<Line> out = new ArrayList<>();
+        for (Line l : LINES) if (l.time() >= since) out.add(l);
+        return out;
     }
 
     /** Texts of lines received since {@code since} (ms) that contain {@code needle} (null = all), oldest first. */
@@ -67,7 +80,7 @@ public final class ChatLog {
         var it = LINES.descendingIterator();
         while (it.hasNext() && out.size() < n) {
             Line l = it.next();
-            if (!includeActionbar && l.kind() == Kind.ACTIONBAR) continue;
+            if (!includeActionbar && l.kind() == Kind.ACTIONBAR || l.kind() == Kind.MOD) continue;
             out.addFirst(l);
         }
         return out;

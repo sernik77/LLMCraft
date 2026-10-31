@@ -16,7 +16,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(ChatComponent.class)
 public abstract class ChatComponentMixin {
-    @Inject(method = "addMessage(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/chat/MessageSignature;Lnet/minecraft/client/GuiMessageTag;)V", at = @At("HEAD"))
+    @Inject(method = "addMessage(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/chat/MessageSignature;Lnet/minecraft/client/GuiMessageTag;)V", at = @At("HEAD"), require = 0)
     private void llmcraft$capture(Component message, MessageSignature signature, GuiMessageTag tag, CallbackInfo ci) {
         if (message != null) ChatLog.addFromHud(message.getString());
     }

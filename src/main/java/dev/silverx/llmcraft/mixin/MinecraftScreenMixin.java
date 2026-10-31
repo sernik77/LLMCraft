@@ -23,7 +23,7 @@ public abstract class MinecraftScreenMixin {
     @Shadow
     public Screen screen;
 
-    @Inject(method = "setScreen", at = @At("HEAD"))
+    @Inject(method = "setScreen", at = @At("HEAD"), require = 0)
     private void llmcraft$traceScreenChange(Screen next, CallbackInfo ci) {
         if (!(screen instanceof AbstractContainerScreen<?>) || next == screen || !Agent.busy()) return;
         List<String> frames = new ArrayList<>();

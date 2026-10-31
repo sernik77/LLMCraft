@@ -158,7 +158,7 @@ public final class ModTools {
                                 .thenApply(fb -> ToolResult.ok("baritone: " + c + (Args.bool(a, "wait", true) ? "" : " (running in the background)") + Mining.baritoneMessages(started, 4)));
                     }
                     int timeout = (int) (Args.num(a, "timeout_seconds", 180) * 20);
-                    return Controller.run(Mining.baritoneWatch("baritone " + c, null), timeout).thenApply(r -> {
+                    return Controller.run(Mining.baritoneWatch("baritone " + c, null, null), timeout).thenApply(r -> {
                         var p = Minecraft.getInstance().player;
                         String pos = p == null ? "" : String.format(Locale.ROOT, " | position %.1f %.1f %.1f", p.getX(), p.getY(), p.getZ());
                         String text = "baritone '" + c + "': " + r + pos + Mining.baritoneMessages(started, 4);

@@ -87,7 +87,7 @@ public final class WorldTools {
                         } catch (Throwable t) {
                             return err("Baritone failed: " + ModTools.rootMessage(t));
                         }
-                        return Controller.run(Mining.baritoneWatch("mining " + names, () -> Mining.broken(blocks) - before >= count), timeout)
+                        return Controller.run(Mining.baritoneWatch("mining " + names, () -> Mining.broken(blocks) - before >= count, () -> Mining.broken(blocks)), timeout)
                                 .thenCompose(r -> Controller.run(Controller.waitTicks(15), 30).thenApply(x -> r)) // let drops get picked up
                                 .thenApply(r -> {
                                     int got = Mining.broken(blocks) - before;

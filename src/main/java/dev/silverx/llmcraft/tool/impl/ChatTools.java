@@ -184,8 +184,11 @@ public final class ChatTools {
     static CompletableFuture<String> collectFeedback(long since, long waitMs) {
         return CompletableFuture.supplyAsync(() -> {
             StringBuilder sb = new StringBuilder();
-            for (ChatLog.Line l : ChatLog.recent(40, true)) {
-                if (l.time() >= since && l.kind() != ChatLog.Kind.SELF) sb.append(l.format()).append('\n');
+            int n = 0;
+            for (ChatLog.Line l : ChatLog.linesSince(since)) {
+                if (l.kind() == ChatLog.Kind.SELF || l.text().contains("Found stash")) continue;
+                if (++n > 25) break;
+                sb.append(l.format()).append('\n');
             }
             return sb.toString().trim();
         }, CompletableFuture.delayedExecutor(waitMs, TimeUnit.MILLISECONDS));

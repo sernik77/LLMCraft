@@ -157,6 +157,30 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
             assertTrue(count(ctx, Items.WOODEN_PICKAXE) == 1, "craft did not produce a wooden pickaxe");
             assertTrue(ctx.computeOnClient(mc -> mc.screen == null && mc.player.containerMenu == mc.player.inventoryMenu), "crafting left a window open");
 
+            // asking for an item you already hold still crafts a new one
+            sp.getServer().runCommand("give Player0 minecraft:oak_log 2");
+            ctx.waitTicks(5);
+            check(ctx, "craft", "{\"item\":\"wooden_pickaxe\"}", "1 wooden_pickaxe");
+            assertTrue(count(ctx, Items.WOODEN_PICKAXE) == 2, "second craft did not add a wooden pickaxe");
+            sp.getServer().runCommand("clear Player0 minecraft:wooden_pickaxe 1");
+
+            // multiplayer-like: only the recipe book, recipes unlock step by step while crafting
+            ctx.runOnClient(mc -> dev.silverx.llmcraft.game.Crafting.useServerRecipes = false);
+            sp.getServer().runCommand("clear Player0");
+            sp.getServer().runCommand("advancement revoke Player0 everything");
+            sp.getServer().runCommand("recipe take Player0 *");
+            sp.getServer().runCommand("give Player0 minecraft:oak_log 3");
+            ctx.waitTicks(10);
+            String locked = run(ctx, "craft", "{\"item\":\"wooden_pickaxe\"}").text;
+            assertTrue(locked.contains("grid"), "a locked recipe should point to the grid fallback: " + locked);
+            check(ctx, "craft", "{\"item\":\"oak_planks\",\"count\":8}", "crafted 8 oak_planks");
+            ctx.waitTicks(5);
+            check(ctx, "craft", "{\"item\":\"stick\"}", "stick");
+            ctx.waitTicks(5);
+            check(ctx, "craft", "{\"item\":\"wooden_pickaxe\"}", "1 wooden_pickaxe");
+            ctx.runOnClient(mc -> dev.silverx.llmcraft.game.Crafting.useServerRecipes = true);
+            sp.getServer().runCommand("recipe take Player0 *");
+
             // manual pattern
             sp.getServer().runCommand("give Player0 minecraft:oak_log 1");
             ctx.waitTicks(5);
@@ -206,6 +230,13 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
             String obsidian = run(ctx, "mine", "{\"block\":\"obsidian\"}").text;
             assertTrue(obsidian.contains("diamond_pickaxe"), "mine should refuse obsidian without a diamond pickaxe: " + obsidian);
             check(ctx, "mine", "{\"block\":\"grass_block\",\"count\":2,\"timeout_seconds\":40}", "broke 2/2");
+            if (dev.silverx.llmcraft.game.BaritoneBridge.available()) {
+                LlmCraft.LOGGER.info("[gametest] Baritone present: testing the Baritone path of mine");
+                check(ctx, "mine", "{\"block\":\"grass_block\",\"count\":3,\"timeout_seconds\":50}", "Baritone said");
+                ctx.waitTicks(20);
+                assertTrue(!dev.silverx.llmcraft.game.BaritoneBridge.isBusy(), "Baritone still running after mine finished");
+                check(ctx, "baritone", "{\"command\":\"goto " + (p1[0] + 3) + " " + p1[1] + " " + p1[2] + "\",\"timeout_seconds\":30}", "baritone 'goto");
+            }
 
             ctx.takeScreenshot("llmcraft-tools");
 
@@ -275,6 +306,17 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
                 LlmCraft.LOGGER.info("[gametest] agent craft: {}", craftHistory);
                 assertTrue(count(ctx, Items.WOODEN_PICKAXE) == 1, "agent did not craft a wooden pickaxe: " + craftHistory);
                 assertTrue(!craftHistory.contains("click_slot") && !craftHistory.contains("press_key"), "agent used GUI tools: " + craftHistory);
+
+                // Step limit: the request ends with a summary instead of an abrupt stop.
+                ctx.runOnClient(mc -> {
+                    ConfigManager.get().agent.maxSteps = 1;
+                    Agent.submit("Call the inventory tool and tell me what I have.", Agent.Source.USER);
+                });
+                ctx.waitFor(mc -> !Agent.busy(), 20 * 300);
+                String wrapped = ctx.computeOnClient(mc -> Stores.current().history().getLast().text);
+                LlmCraft.LOGGER.info("[gametest] after step limit: {}", wrapped);
+                assertTrue(!wrapped.isBlank() && !wrapped.equals("(no reply)") && wrapped.contains("inventory"), "no summary after the step limit: " + wrapped);
+                ctx.runOnClient(mc -> ConfigManager.get().agent.maxSteps = 32);
                 ctx.takeScreenshot("llmcraft-agent");
             } else {
                 LlmCraft.LOGGER.warn("[gametest] Ollama not reachable, skipping the agent round trip");
