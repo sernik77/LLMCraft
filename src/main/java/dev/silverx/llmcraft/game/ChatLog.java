@@ -36,6 +36,31 @@ public final class ChatLog {
         while (LINES.size() > CAPACITY) LINES.removeFirst();
     }
 
+    /**
+     * A line printed directly into the chat HUD by a client mod ("[Baritone] ...", "[Meteor] ...").
+     * Lines that already arrived through the message events, and our own output, are skipped.
+     */
+    public static synchronized void addFromHud(String text) {
+        if (text == null || text.isBlank() || !text.startsWith("[")) return;
+        String own = dev.silverx.llmcraft.config.ConfigManager.get().chat.displayName;
+        if (text.startsWith("[" + (own == null || own.isBlank() ? "AI" : own) + "]")) return;
+        long now = System.currentTimeMillis();
+        var it = LINES.descendingIterator();
+        while (it.hasNext()) {
+            Line l = it.next();
+            if (now - l.time() > 2000) break;
+            if (l.text().equals(text)) return;
+        }
+        add(Kind.SYSTEM, null, text);
+    }
+
+    /** Texts of lines received since {@code since} (ms) that contain {@code needle} (null = all), oldest first. */
+    public static synchronized List<String> since(long since, String needle) {
+        List<String> out = new ArrayList<>();
+        for (Line l : LINES) if (l.time() >= since && (needle == null || l.text().contains(needle))) out.add(l.text());
+        return out;
+    }
+
     /** Last {@code n} lines, oldest first; actionbar spam is skipped unless requested. */
     public static synchronized List<Line> recent(int n, boolean includeActionbar) {
         List<Line> out = new ArrayList<>();

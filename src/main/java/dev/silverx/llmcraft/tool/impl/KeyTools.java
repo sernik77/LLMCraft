@@ -65,7 +65,7 @@ public final class KeyTools {
                 }).build());
 
         out.add(Tool.builder("press_key", Category.KEYBINDS,
-                        "Simulate a physical keyboard key press (reaches every mod, including ones with their own hotkey systems, and open GUIs). Key names: 'a'..'z', '0'..'9', 'f1'..'f12', 'escape', 'enter', 'tab', 'space', 'left.shift', 'right.shift', 'up', 'down', 'left', 'right', 'delete', 'backspace', or full ids like 'key.keyboard.right.shift'.")
+                        "Simulate a physical key press for mods with their own hotkey systems (e.g. Meteor). Names: 'a'..'z', '0'..'9', 'f1'..'f12', 'escape', 'enter', 'tab', 'space', 'left.shift', 'up', 'delete', or ids like 'key.keyboard.right.shift'. Not needed for inventory/crafting.")
                 .param("key", "string", "Key name", true)
                 .param("hold_seconds", "number", "How long to hold (default 0.1)", false)
                 .arrayParam("modifiers", "string", "Any of: shift, control, alt", false)

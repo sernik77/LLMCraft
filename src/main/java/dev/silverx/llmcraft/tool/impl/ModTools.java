@@ -5,6 +5,8 @@ import dev.silverx.llmcraft.config.ConfigManager;
 import dev.silverx.llmcraft.game.BaritoneBridge;
 import dev.silverx.llmcraft.game.Controller;
 import dev.silverx.llmcraft.game.LogTail;
+import dev.silverx.llmcraft.game.Mining;
+import dev.silverx.llmcraft.game.Script;
 import dev.silverx.llmcraft.tool.Args;
 import dev.silverx.llmcraft.tool.Tool;
 import dev.silverx.llmcraft.tool.ToolResult;
@@ -113,15 +115,36 @@ public final class ModTools {
                 }).build());
 
         out.add(Tool.builder("baritone", Category.BARITONE,
-                        "Run a Baritone command (no prefix), e.g. 'goto 100 64 -20', 'goto diamond_ore', 'mine iron_ore', 'follow player Alex', 'explore', 'farm', 'come', 'stop', 'thisway 100'. With wait=true the call returns when Baritone is idle again.")
+                        "Run a Baritone command (no prefix) for travel and automation: 'goto 100 64 -20' (stand at that spot), 'goto diamond_ore' (walk to the nearest one), "
+                                + "'follow player Alex', 'explore', 'farm', 'come', 'thisway 100', 'stop'. For gathering blocks prefer the mine tool (it counts and stops). "
+                                + "With wait=true the call returns when Baritone is idle again, with Baritone's own messages.")
                 .param("command", "string", "Baritone command without '#'", true)
                 .param("wait", "boolean", "Wait until Baritone finishes (default true)", false)
-                .param("timeout_seconds", "number", "Max wait (default 120)", false)
+                .param("timeout_seconds", "number", "Max wait (default 180)", false)
                 .available(ctx -> BaritoneBridge.available())
                 .summary(a -> "baritone " + Args.str(a, "command", ""))
+                .deny((ctx, a) -> {
+                    // "goto x y z" means "stand exactly there": aimed at a solid block, Baritone digs it out first.
+                    String[] parts = Args.str(a, "command", "").trim().replaceFirst("^#", "").split("\\s+");
+                    if (parts.length == 4 && parts[0].equalsIgnoreCase("goto")) {
+                        try {
+                            var pos = new net.minecraft.core.BlockPos(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]), Integer.parseInt(parts[3]));
+                            var level = Minecraft.getInstance().level;
+                            if (level != null && level.isLoaded(pos) && !level.getBlockState(pos).canBeReplaced() && !level.getBlockState(pos).getCollisionShape(level, pos).isEmpty()) {
+                                return "goto x y z makes you STAND at that block, but " + pos.toShortString() + " is solid ("
+                                        + net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(level.getBlockState(pos).getBlock()).getPath()
+                                        + ") and Baritone would dig it out. To get next to it use 'goto " + parts[1] + " " + (pos.getY() + 1) + " " + parts[3]
+                                        + "' (on top) or a free spot beside it; to collect it use the mine tool.";
+                            }
+                        } catch (NumberFormatException ignored) {
+                        }
+                    }
+                    return null;
+                })
                 .async((ctx, a) -> {
                     String cmd = Args.reqStr(a, "command").trim();
                     if (cmd.startsWith("#")) cmd = cmd.substring(1);
+                    long started = System.currentTimeMillis();
                     boolean ok;
                     try {
                         ok = BaritoneBridge.execute(cmd);
@@ -131,13 +154,15 @@ public final class ModTools {
                     if (!ok) return CompletableFuture.completedFuture(ToolResult.error("Baritone did not accept '" + cmd + "'"));
                     String c = cmd;
                     if (!Args.bool(a, "wait", true) || cmd.startsWith("stop") || cmd.startsWith("cancel")) {
-                        return CompletableFuture.completedFuture(ToolResult.ok("baritone: " + c));
+                        return ChatTools.collectFeedback(started, 500)
+                                .thenApply(fb -> ToolResult.ok("baritone: " + c + (Args.bool(a, "wait", true) ? "" : " (running in the background)") + Mining.baritoneMessages(started, 4)));
                     }
-                    int timeout = (int) (Args.num(a, "timeout_seconds", 120) * 20);
-                    return Controller.run(baritoneWait(), timeout).thenApply(r -> {
+                    int timeout = (int) (Args.num(a, "timeout_seconds", 180) * 20);
+                    return Controller.run(Mining.baritoneWatch("baritone " + c, null), timeout).thenApply(r -> {
                         var p = Minecraft.getInstance().player;
                         String pos = p == null ? "" : String.format(Locale.ROOT, " | position %.1f %.1f %.1f", p.getX(), p.getY(), p.getZ());
-                        return ToolResult.ok("baritone '" + c + "': " + r + pos);
+                        String text = "baritone '" + c + "': " + r + pos + Mining.baritoneMessages(started, 4);
+                        return Script.failed(r) ? ToolResult.error(text) : ToolResult.ok(text);
                     });
                 }).build());
 
@@ -152,29 +177,6 @@ public final class ModTools {
                     text = text.replaceAll("(?i)(access[_-]?token|api[_-]?key|authorization|bearer|session)([\"'=: ]+)\\S+", "$1$2<redacted>");
                     return ToolResult.ok(text.isEmpty() ? "(no matching lines)" : text);
                 }).build());
-    }
-
-    private static Controller.Task baritoneWait() {
-        return new Controller.Task() {
-            int age;
-
-            @Override
-            public String tick(Minecraft mc) {
-                age++;
-                // Give Baritone a moment to start before checking whether it is idle.
-                return age > 20 && !BaritoneBridge.isBusy() ? "finished" : null;
-            }
-
-            @Override
-            public void onStop() {
-                if (age > 0 && BaritoneBridge.isBusy()) BaritoneBridge.cancel();
-            }
-
-            @Override
-            public String describe() {
-                return "baritone running";
-            }
-        };
     }
 
     static boolean hidden(String relPath) {

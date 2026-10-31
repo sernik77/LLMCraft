@@ -106,6 +106,13 @@ public final class Tool {
             return this;
         }
 
+        /** A parameter with a hand-written JSON schema (nested arrays/objects). */
+        public Builder rawParam(String name, JsonObject paramSchema, boolean isRequired) {
+            props.add(name, paramSchema);
+            if (isRequired) required.add(name);
+            return this;
+        }
+
         public Builder enumParam(String name, String description, boolean isRequired, String... values) {
             JsonObject p = new JsonObject();
             p.addProperty("type", "string");

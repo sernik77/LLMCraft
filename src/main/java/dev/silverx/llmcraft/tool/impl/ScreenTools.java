@@ -36,7 +36,7 @@ public final class ScreenTools {
 
     public static void register(List<Tool> out) {
         out.add(Tool.builder("read_screen", Category.SCREEN,
-                        "Describe the open GUI: title, type, buttons/text fields (with widget indexes) and, for containers, every slot (slot ids for click_slot).")
+                        "Describe the open GUI (buttons, text fields, container slots). Only for GUIs of other mods/servers - crafting, chests, furnaces, inventory and equipment have their own tools.")
                 .param("include_empty_slots", "boolean", "List empty slots too (default false)", false)
                 .sync((ctx, a) -> ToolResult.ok(describe(mc().screen, Args.bool(a, "include_empty_slots", false))))
                 .build());
@@ -89,7 +89,7 @@ public final class ScreenTools {
                 }).build());
 
         out.add(Tool.builder("click_slot", Category.SCREEN,
-                        "Click a slot of the open container (chest, furnace, crafting, inventory...). Actions: pickup (normal click), quick_move (shift-click), swap (with hotbar_slot), throw, pickup_all (double click), clone (creative middle click).")
+                        "Click a slot of an open container GUI by slot id from read_screen. Only for unusual GUIs (server menus, mod machines); use craft/use_container/smelt/equip/drop_items otherwise. Actions: pickup, quick_move (shift-click), swap (with hotbar_slot), throw, pickup_all, clone.")
                 .param("slot", "integer", "Slot id from read_screen (-999 = outside the window to drop the carried item)", true)
                 .enumParam("action", "Default pickup", false, "pickup", "quick_move", "swap", "throw", "pickup_all", "clone")
                 .param("right_click", "boolean", "Right button (pickup: take half / place one)", false)

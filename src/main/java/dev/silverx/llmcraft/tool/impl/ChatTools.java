@@ -77,10 +77,16 @@ public final class ChatTools {
                     String c = stripSlash(Args.str(a, "command", ""));
                     if (c.isBlank()) return "empty command";
                     String root = c.split("\\s+")[0].toLowerCase(Locale.ROOT);
+                    if (root.startsWith("minecraft:")) root = root.substring(10);
                     if (SELF_COMMANDS.contains(root)) return "the AI cannot run its own control commands";
                     if (!isClientCommand(c)) {
                         for (String pattern : ctx.config.commandDenyPatterns) {
                             if (safeMatches(pattern, c)) return "command blocked by commandDenyPatterns (" + pattern + ")";
+                        }
+                        // The server only sends the commands this player may use; anything else would just fail.
+                        var conn = Minecraft.getInstance().getConnection();
+                        if (conn != null && conn.getCommands().getRoot().getChild(root) == null) {
+                            return "the server does not let you use /" + root + " (no permission or cheats are off) - do it by playing instead";
                         }
                     }
                     if (c.contains("\n") || c.contains("§")) return "invalid characters";
@@ -140,7 +146,9 @@ public final class ChatTools {
 
     static String stripSlash(String c) {
         c = c == null ? "" : c.trim();
-        return c.startsWith("/") ? c.substring(1) : c;
+        if (c.startsWith("/")) c = c.substring(1);
+        // vanilla has no "minecraft:give" style aliases; plain names work everywhere
+        return c.startsWith("minecraft:") ? c.substring(10) : c;
     }
 
     static boolean safeMatches(String pattern, String text) {

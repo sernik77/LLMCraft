@@ -101,6 +101,8 @@ public final class LlmConfig {
         public float lookSpeedDegPerTick = 25f;
         /** Hard cap for a single movement/hold action, in ticks (20 ticks = 1 s). */
         public int maxActionTicks = 20 * 60;
+        /** Hard cap for one long-running AI task (mining, smelting, Baritone travel), in seconds. */
+        public int maxTaskSeconds = 600;
         /** Stop all AI control when you take damage. */
         public boolean stopOnDamage = false;
         /** Stop all AI control when you press a movement key yourself. */

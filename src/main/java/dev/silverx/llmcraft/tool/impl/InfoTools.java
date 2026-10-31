@@ -116,18 +116,6 @@ public final class InfoTools {
                     return ToolResult.ok(s.isEmpty() ? "no entities found" : s.replace("; ", "\n"));
                 }).build());
 
-        out.add(Tool.builder("player_list", Category.WORLD_READ, "All players in the tab list with latency and game mode.")
-                .sync((ctx, a) -> {
-                    Minecraft mc = Minecraft.getInstance();
-                    if (mc.getConnection() == null) return ToolResult.error("not connected");
-                    StringBuilder sb = new StringBuilder();
-                    for (var info : mc.getConnection().getListedOnlinePlayers()) {
-                        sb.append(info.getProfile().name()).append(" (").append(info.getLatency()).append("ms, ")
-                                .append(info.getGameMode() == null ? "?" : info.getGameMode().getName()).append(")\n");
-                    }
-                    return ToolResult.ok(sb.isEmpty() ? "nobody" : sb.toString().trim());
-                }).build());
-
         out.add(Tool.builder("wait", Category.WORLD_READ, "Wait some seconds (e.g. for something to happen), then continue.")
                 .param("seconds", "number", "0.05 - 60", true)
                 .async((ctx, a) -> {

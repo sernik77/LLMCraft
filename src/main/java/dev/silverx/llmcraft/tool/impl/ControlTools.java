@@ -2,13 +2,13 @@ package dev.silverx.llmcraft.tool.impl;
 
 import dev.silverx.llmcraft.config.Category;
 import dev.silverx.llmcraft.game.Controller;
+import dev.silverx.llmcraft.game.Inv;
 import dev.silverx.llmcraft.game.Snapshot;
 import dev.silverx.llmcraft.tool.Args;
 import dev.silverx.llmcraft.tool.Tool;
 import dev.silverx.llmcraft.tool.ToolResult;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
@@ -107,13 +107,6 @@ public final class ControlTools {
                             .thenApply(ToolResult::ok);
                 }).build());
 
-        out.add(Tool.builder("jump", Category.MOVEMENT, "Jump once.")
-                .sync((ctx, a) -> {
-                    if (mc().player == null) return ToolResult.error("not in a world");
-                    Controller.hold(mc().options.keyJump, 3);
-                    return ToolResult.ok("jumped");
-                }).build());
-
         out.add(Tool.builder("stop_actions", Category.MOVEMENT, "Immediately stop every running AI movement/action and release all keys.")
                 .sync((ctx, a) -> {
                     Controller.stopAll("requested by AI");
@@ -176,22 +169,34 @@ public final class ControlTools {
                     });
                 }).build());
 
-        out.add(Tool.builder("mine_block", Category.INTERACTION, "Break the block at a position (must be within reach, ~4.5 blocks). Holds left click until it breaks.")
+        out.add(Tool.builder("mine_block", Category.INTERACTION,
+                        "Break one block at a position within reach (~4.5 blocks); the best tool from the inventory is selected automatically. To gather several blocks use mine.")
                 .param("x", "integer", "X", true).param("y", "integer", "Y", true).param("z", "integer", "Z", true)
                 .param("timeout_seconds", "number", "Default 30", false)
                 .async((ctx, a) -> {
                     if (mc().player == null) return err("not in a world");
                     BlockPos pos = new BlockPos(Args.integer(a, "x", 0), Args.integer(a, "y", 0), Args.integer(a, "z", 0));
-                    if (mc().level.getBlockState(pos).isAir()) return err("there is no block at " + pos.toShortString());
-                    return Controller.run(Controller.mine(pos), (int) (Args.num(a, "timeout_seconds", 30) * 20)).thenApply(ToolResult::ok);
+                    var state = mc().level.getBlockState(pos);
+                    if (state.isAir()) return err("there is no block at " + pos.toShortString());
+                    String tool = Inv.bestToolFor(state);
+                    String warn = Inv.canHarvest(state) || mc().player.isCreative() ? ""
+                            : " (warning: it drops nothing without " + Inv.minimalTool(state) + " or better)";
+                    return Controller.run(Controller.mine(pos), (int) (Args.num(a, "timeout_seconds", 30) * 20))
+                            .thenApply(r -> ToolResult.ok(r + " using " + tool + warn));
                 }).build());
 
         out.add(Tool.builder("place_block", Category.INTERACTION,
-                        "Place the held block at a position (needs an adjacent solid block and must be in reach). Select the block with select_slot first.")
+                        "Place a block at a position (needs an adjacent solid block, must be in reach). Give 'item' to pick the block from the inventory, otherwise the held block is used.")
                 .param("x", "integer", "X", true).param("y", "integer", "Y", true).param("z", "integer", "Z", true)
+                .param("item", "string", "Block item to place, e.g. 'cobblestone' (default: held item)", false)
                 .async((ctx, a) -> {
                     var p = mc().player;
                     if (p == null) return err("not in a world");
+                    if (Args.has(a, "item")) {
+                        String e = Inv.toHand(Args.str(a, "item", ""));
+                        if (e != null) return err(e);
+                    }
+                    if (p.getMainHandItem().isEmpty()) return err("nothing in hand to place - pass 'item'");
                     BlockPos pos = new BlockPos(Args.integer(a, "x", 0), Args.integer(a, "y", 0), Args.integer(a, "z", 0));
                     var level = mc().level;
                     if (!level.getBlockState(pos).canBeReplaced()) return err("position is occupied by " + level.getBlockState(pos).getBlock().getName().getString());
@@ -215,44 +220,6 @@ public final class ControlTools {
                     });
                 }).build());
 
-        // ---------------- inventory ----------------
-        out.add(Tool.builder("select_slot", Category.INVENTORY, "Select a hotbar slot (0-8).")
-                .param("slot", "integer", "0-8", true)
-                .sync((ctx, a) -> {
-                    var p = mc().player;
-                    if (p == null) return ToolResult.error("not in a world");
-                    int s = Args.integer(a, "slot", -1);
-                    if (s < 0 || s > 8) return ToolResult.error("slot must be 0-8");
-                    p.getInventory().setSelectedSlot(s);
-                    return ToolResult.ok("selected slot " + s + ": " + Snapshot.stack(p.getInventory().getItem(s)));
-                }).build());
-
-        out.add(Tool.builder("drop_item", Category.INVENTORY, "Drop the held item (one, or the whole stack).")
-                .param("whole_stack", "boolean", "Drop the full stack (default false)", false)
-                .sync((ctx, a) -> {
-                    var p = mc().player;
-                    if (p == null) return ToolResult.error("not in a world");
-                    String what = Snapshot.stack(p.getMainHandItem());
-                    if (p.getMainHandItem().isEmpty()) return ToolResult.error("hand is empty");
-                    boolean all = Args.bool(a, "whole_stack", false);
-                    p.drop(all);
-                    p.swing(InteractionHand.MAIN_HAND);
-                    return ToolResult.ok("dropped " + (all ? what : "one of " + what));
-                }).build());
-
-        out.add(Tool.builder("swap_hands", Category.INVENTORY, "Swap main hand and offhand items.")
-                .sync((ctx, a) -> {
-                    if (mc().player == null) return ToolResult.error("not in a world");
-                    Controller.tap(mc().options.keySwapOffhand);
-                    return ToolResult.ok("swapped");
-                }).build());
-
-        out.add(Tool.builder("open_inventory", Category.INVENTORY, "Open the player's inventory screen (then use read_screen / click_slot).")
-                .sync((ctx, a) -> {
-                    if (mc().player == null) return ToolResult.error("not in a world");
-                    mc().setScreen(new InventoryScreen(mc().player));
-                    return ToolResult.ok("inventory opened");
-                }).build());
     }
 
     static Vec3 blockCenter(double x, double y, double z) {

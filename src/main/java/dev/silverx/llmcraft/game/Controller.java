@@ -106,7 +106,8 @@ public final class Controller {
 
     public static CompletableFuture<String> run(Task task, int timeoutTicks) {
         CompletableFuture<String> f = new CompletableFuture<>();
-        int cap = ConfigManager.get().control.maxActionTicks;
+        // Keys are capped by maxActionTicks (see hold); whole tasks may run longer (mining, smelting, travel).
+        int cap = Math.max(ConfigManager.get().control.maxActionTicks, ConfigManager.get().control.maxTaskSeconds * 20);
         TASKS.add(new Running(task, f, Math.min(timeoutTicks <= 0 ? cap : timeoutTicks, cap), new int[]{0}));
         controlling = true;
         return f;

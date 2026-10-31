@@ -3,6 +3,8 @@ package dev.silverx.llmcraft.tool;
 import dev.silverx.llmcraft.tool.impl.ChatTools;
 import dev.silverx.llmcraft.tool.impl.ControlTools;
 import dev.silverx.llmcraft.tool.impl.InfoTools;
+import dev.silverx.llmcraft.tool.impl.ItemTools;
+import dev.silverx.llmcraft.tool.impl.WorldTools;
 import dev.silverx.llmcraft.tool.impl.KeyTools;
 import dev.silverx.llmcraft.tool.impl.MemoryTools;
 import dev.silverx.llmcraft.tool.impl.ModTools;
@@ -23,6 +25,8 @@ public final class ToolRegistry {
         TOOLS.clear();
         ChatTools.register(TOOLS);
         InfoTools.register(TOOLS);
+        ItemTools.register(TOOLS);
+        WorldTools.register(TOOLS);
         ControlTools.register(TOOLS);
         ScreenTools.register(TOOLS);
         KeyTools.register(TOOLS);

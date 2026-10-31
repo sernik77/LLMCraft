@@ -12,7 +12,11 @@ import dev.silverx.llmcraft.data.WorldStore;
 import dev.silverx.llmcraft.game.BaritoneBridge;
 import dev.silverx.llmcraft.game.ClientThread;
 import dev.silverx.llmcraft.game.Controller;
+import dev.silverx.llmcraft.game.Inv;
 import dev.silverx.llmcraft.game.Output;
+import dev.silverx.llmcraft.game.Safety;
+import dev.silverx.llmcraft.game.Snapshot;
+import net.minecraft.client.Minecraft;
 import dev.silverx.llmcraft.llm.ChatRequest;
 import dev.silverx.llmcraft.llm.ChatResponse;
 import dev.silverx.llmcraft.llm.LlmProvider;
@@ -145,6 +149,12 @@ public final class Agent {
                     finished(this);
                     return;
                 }
+                String keyProblem = keyProblem(profile);
+                if (keyProblem != null) {
+                    Output.error(keyProblem);
+                    finished(this);
+                    return;
+                }
                 provider = Providers.create(profile);
                 toolCtx = new ToolContext(cfg, world, profile);
 
@@ -195,11 +205,7 @@ public final class Agent {
                     complete(resp.text);
                     return CompletableFuture.completedFuture(null);
                 }
-                if (step >= cfg.agent.maxSteps) {
-                    Output.error("Stopped after " + step + " steps (agent.maxSteps).");
-                    complete(resp.text);
-                    return CompletableFuture.completedFuture(null);
-                }
+                if (step >= cfg.agent.maxSteps) return wrapUp(resp);
                 List<ToolCall> calls = resp.toolCalls;
                 if (calls.size() > cfg.agent.maxToolCallsPerStep) calls = calls.subList(0, cfg.agent.maxToolCallsPerStep);
                 CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
@@ -218,6 +224,26 @@ public final class Agent {
                     chain = chain.thenRun(() -> request.messages.add(Message.toolResult(skipped, "ERROR: skipped, too many tool calls in one step")));
                 }
                 return chain.thenCompose(v -> loop());
+            });
+        }
+
+        /** Step limit reached: answer the pending tool calls, then let the model report back once without acting. */
+        CompletableFuture<Void> wrapUp(ChatResponse last) {
+            Output.info("Step limit reached (agent.maxSteps = " + cfg.agent.maxSteps + "), asking for a summary.");
+            for (ToolCall c : last.toolCalls) request.messages.add(Message.toolResult(c, "ERROR: not executed - step limit reached"));
+            request.messages.add(Message.user("[system] You reached the step limit for this request. Do not call any tools now. "
+                    + "In 1-3 short lines tell the player what you did, what is left, and that they can say 'continue'."));
+            return provider.chat(request).handle((resp, t) -> {
+                if (cancelled) return null;
+                if (resp != null) {
+                    ChatResponse textOnly = new ChatResponse();
+                    textOnly.text = resp.text;
+                    textOnly.promptTokens = resp.promptTokens;
+                    textOnly.completionTokens = resp.completionTokens;
+                    showResponse(textOnly);
+                }
+                complete(resp == null ? "" : resp.text);
+                return null;
             });
         }
 
@@ -243,7 +269,9 @@ public final class Agent {
                         return CompletableFuture.completedFuture(ToolResult.error("the player denied this action"));
                     }
                     if (cfg.chat.showToolCalls) Output.tool(gate.summary);
-                    if (tool.category == Category.BARITONE) usedBaritone = true;
+                    if (tool.category == Category.BARITONE || gate.category == Category.BARITONE) usedBaritone = true;
+                    boolean acting = ACTING.contains(gate.category);
+                    return (acting ? ClientThread.call(Inv::counts) : CompletableFuture.completedFuture((java.util.Map<String, Integer>) null)).thenCompose(before -> {
                     CompletableFuture<ToolResult> run;
                     try {
                         run = tool.handler.apply(toolCtx, args);
@@ -258,6 +286,18 @@ public final class Agent {
                         }
                         actionLog.add(gate.summary + (r.error ? " -> " + abbreviate(r.text, 80) : ""));
                         return r;
+                    }).thenCompose(r -> ClientThread.call(() -> {
+                        // What changed and where things stand, so the model does not have to guess or look.
+                        StringBuilder extra = new StringBuilder();
+                        if (before != null && Minecraft.getInstance().player != null) {
+                            String delta = Inv.delta(before, Inv.counts());
+                            if (!delta.isEmpty()) extra.append("\ninventory: ").append(delta);
+                            extra.append("\n[").append(Snapshot.statusLine(Minecraft.getInstance())).append(']');
+                        }
+                        String hazard = Safety.take();
+                        if (hazard != null) extra.append('\n').append(hazard);
+                        return r.append(extra.toString());
+                    }));
                     });
                 });
             });
@@ -301,7 +341,7 @@ public final class Agent {
             if (cfg.chat.showThinking && resp.thinking != null && !resp.thinking.isBlank()) Output.thinking(abbreviate(resp.thinking.trim(), 400));
             String text = resp.text == null ? "" : resp.text.trim();
             if (!text.isEmpty() && !isSilent(text)) {
-                for (String line : text.split("\n+")) if (!line.isBlank()) Output.reply(line.trim());
+                for (String line : text.split("\n+")) if (!line.isBlank()) Output.reply(plain(line.trim()));
                 if (!shownText.isEmpty()) shownText.append('\n');
                 shownText.append(text);
             }
@@ -325,6 +365,30 @@ public final class Agent {
             String t = text.trim().toUpperCase();
             return t.equals("NOTHING") || t.equals("NOTHING.") || t.equals("[NOTHING]");
         }
+    }
+
+    /** Tool categories whose results get the inventory change and a status line. */
+    private static final java.util.Set<Category> ACTING = java.util.EnumSet.of(Category.MOVEMENT, Category.INTERACTION, Category.INVENTORY,
+            Category.BARITONE, Category.COMMANDS, Category.CLIENT_COMMANDS, Category.KEYBINDS, Category.SCREEN);
+
+    /** Chat shows raw text: drop markdown emphasis, headings and code ticks that models add anyway. */
+    static String plain(String line) {
+        String s = line.replaceAll("^#{1,6}\\s+", "").replace("**", "").replace("__", "").replace("`", "");
+        return s.replaceAll("^[*-]\\s+", "• ");
+    }
+
+    /** Explains a missing API key before a request is sent (instead of a cryptic 400/401 from the provider). */
+    static String keyProblem(ProviderProfile p) {
+        if (p.type == ProviderProfile.Type.OLLAMA || !p.resolvedApiKey().isBlank()) return null;
+        String host = p.trimmedBaseUrl().replaceFirst("^https?://", "").replaceFirst("[:/].*$", "");
+        if (host.equals("localhost") || host.startsWith("127.") || host.equals("0.0.0.0") || host.startsWith("192.168.") || host.startsWith("10.")) return null;
+        String key = p.apiKey == null ? "" : p.apiKey.trim();
+        if (key.startsWith("env:")) {
+            return "No API key for profile '" + p.name + "': the environment variable " + key.substring(4).trim()
+                    + " is not set for Minecraft. Set it in your launcher (Prism: Edit Instance -> Settings -> Environment variables) and restart the game,"
+                    + " or save the key directly with /llm key " + p.name + " <key>.";
+        }
+        return "No API key for profile '" + p.name + "'. Save one with /llm key " + p.name + " <key> (or set \"apiKey\": \"env:VARIABLE\" in config.json).";
     }
 
     private static boolean warnedContext;

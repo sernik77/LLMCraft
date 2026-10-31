@@ -41,6 +41,9 @@ public final class Snapshot {
             sb.append("Holding: ").append(stack(p.getMainHandItem())).append(" | offhand: ").append(stack(p.getOffhandItem()))
                     .append(" | hotbar slot ").append(p.getInventory().getSelectedSlot()).append('\n');
             if (cfg.context.includeInventorySummary) sb.append("Inventory: ").append(inventorySummary(p, 25)).append('\n');
+            sb.append(canCheat(mc) ? "Operator commands: allowed (cheats on)\n"
+                    : "Operator commands: NOT allowed (cheats off / not op) - /give, /tp, /gamemode, /time etc. will fail; get things by playing\n");
+            if (BaritoneBridge.available()) sb.append("Baritone: installed, ").append(BaritoneBridge.isBusy() ? "currently BUSY" : "idle").append('\n');
         }
         if (worldRead) {
             sb.append(worldLine(mc)).append('\n');
@@ -55,6 +58,27 @@ public final class Snapshot {
         }
         if (screenRead && cfg.context.includeScreenInfo) sb.append("Open screen: ").append(screenName(mc.screen)).append('\n');
         return sb.toString().trim();
+    }
+
+    /** One short line appended to action results so the model always knows where things stand. */
+    public static String statusLine(Minecraft mc) {
+        var p = mc.player;
+        if (p == null) return "not in a world";
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format(Locale.ROOT, "hp %.0f/%.0f food %d", p.getHealth(), p.getMaxHealth(), p.getFoodData().getFoodLevel()));
+        if (p.getAirSupply() < p.getMaxAirSupply()) sb.append(" air ").append(Math.max(0, p.getAirSupply())).append('/').append(p.getMaxAirSupply());
+        if (p.isInWater()) sb.append(" in water");
+        if (p.isInLava()) sb.append(" IN LAVA");
+        sb.append(String.format(Locale.ROOT, " | pos %.1f %.1f %.1f", p.getX(), p.getY(), p.getZ()));
+        sb.append(" | holding ").append(stack(p.getMainHandItem()));
+        if (BaritoneBridge.available()) sb.append(" | baritone ").append(BaritoneBridge.isBusy() ? "BUSY" : "idle");
+        if (mc.screen != null) sb.append(" | screen ").append(screenName(mc.screen));
+        return sb.toString();
+    }
+
+    /** Whether the server lets the player use operator commands (/give, /tp, /time...). */
+    public static boolean canCheat(Minecraft mc) {
+        return mc.player != null && mc.player.permissions().hasPermission(net.minecraft.server.permissions.Permissions.COMMANDS_GAMEMASTER);
     }
 
     public static String playerLine(Minecraft mc) {

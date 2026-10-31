@@ -17,7 +17,7 @@ LLMCraft podłącza dowolny model językowy do klienta gry: model czyta czat, ś
 | Mod Menu + Cloth Config | opcjonalne — ekran ustawień |
 | Baritone (także fork Meteora) | opcjonalne — narzędzie `baritone` |
 
-Skopiuj `build/libs/llmcraft-1.0.0.jar` do folderu `mods`.
+Skopiuj `build/libs/llmcraft-1.1.0.jar` do folderu `mods` (usuń starszą wersję).
 
 ## Szybki start (lokalna Ollama)
 
@@ -48,7 +48,9 @@ Klucz świata: `sp_<folder zapisu>` dla singleplayera, `mp_<adres serwera>` dla 
 
 ## Providerzy
 
-Profile są w `config.json` → `profiles`, aktywny w `activeProfile` (`/llm profile <nazwa>`). Klucz API można podać wprost albo jako `env:NAZWA_ZMIENNEJ`.
+Profile są w `config.json` → `profiles`, aktywny w `activeProfile` (`/llm profile <nazwa>`). Klucz API można podać wprost albo jako `env:NAZWA_ZMIENNEJ`; najprościej z gry: `/llm key claude sk-ant-…` (sam `/llm key claude` pokazuje, skąd klucz jest brany).
+
+> **`env:` a launcher**: zmienna musi być widoczna dla procesu Minecrafta. W Prism Launcher ustawisz ją w *Edytuj instancję → Ustawienia → Zmienne środowiskowe* (potem restart gry). Gdy klucza brak, mod mówi to przed wysłaniem zapytania, zamiast pokazywać błąd 400/401 od dostawcy.
 
 | Profil | `type` | `baseUrl` | Uwagi |
 |---|---|---|---|
@@ -60,7 +62,7 @@ Profile są w `config.json` → `profiles`, aktywny w `activeProfile` (`/llm pro
 | LM Studio | `OPENAI` | `http://localhost:1234/v1` | |
 | llama.cpp / vLLM | `OPENAI` | `http://host:port/v1` | |
 
-> **Okno kontekstu**: same schematy ~45 narzędzi to ok. 4 tys. tokenów. Dla modeli lokalnych domyślnie `contextTokens: 16384` (Ollama dostaje to jako `num_ctx`; więcej kontekstu = więcej VRAM). Przy 8192 historia rozmowy praktycznie się nie zmieści — mod przytnie ją automatycznie i ostrzeże w czacie. Wyłączenie nieużywanych kategorii uprawnień (`OFF`) zmniejsza liczbę wysyłanych narzędzi.
+> **Okno kontekstu**: same schematy ~49 narzędzi to ok. 5 tys. tokenów. Dla modeli lokalnych domyślnie `contextTokens: 16384` (Ollama dostaje to jako `num_ctx`; więcej kontekstu = więcej VRAM). Przy 8192 historia rozmowy praktycznie się nie zmieści — mod przytnie ją automatycznie i ostrzeże w czacie. Wyłączenie nieużywanych kategorii uprawnień (`OFF`) zmniejsza liczbę wysyłanych narzędzi.
 
 Pola profilu: `model`, `temperature`, `maxTokens`, `contextTokens` (budżet historii; dla Ollamy też `num_ctx`), `toolMode` (`NATIVE` / `JSON` / `NONE`), `vision`, `timeoutSeconds`, `headers`, `extraBody` (dowolne pola doklejane do zapytania).
 
@@ -80,9 +82,9 @@ Nowy profil z poziomu gry (indeks = liczba istniejących profili, domyślnie 6):
 | `world_read` | bloki, encje, czas, pogoda, biom, gracze, scoreboard | ALLOW | ALLOW |
 | `player_read` | status i ekwipunek | ALLOW | ALLOW |
 | `screen` | odczyt i obsługa GUI/kontenerów (też z innych modów) | ALLOW | ALLOW |
-| `inventory` | slot hotbara, wyrzucanie, zamiana rąk | ALLOW | ASK |
+| `inventory` | crafting, zakładanie, wyrzucanie przedmiotów (bez GUI) | ALLOW | ASK |
 | `movement` | ruch, kamera, chodzenie do punktu | ALLOW | ALLOW |
-| `interaction` | atak, użycie, kopanie, stawianie bloków | ALLOW | ASK |
+| `interaction` | atak, użycie, jedzenie, kopanie, stawianie bloków, skrzynie i piece | ALLOW | ASK |
 | `keybinds` | naciskanie keybindów i fizycznych klawiszy | ASK | ASK |
 | `mods` | lista modów, metadane, pliki konfiguracyjne | ALLOW | ALLOW |
 | `baritone` | sterowanie Baritone | ALLOW | ASK |
@@ -96,17 +98,32 @@ Nowy profil z poziomu gry (indeks = liczba istniejących profili, domyślnie 6):
 - Kategoria `OFF` = model w ogóle nie widzi tych narzędzi.
 - `commandDenyPatterns` (np. `op`, `ban`, `stop`) blokują komendy zawsze; `commandAutoAllowPatterns` przepuszczają bez pytania.
 
-## Narzędzia (≈45)
+## Narzędzia (≈49)
 
+Najważniejsza zasada: **model nie klika po GUI**. Crafting, skrzynie, piece, zakładanie przedmiotów i kopanie to pojedyncze wywołania, które mod wykonuje sam — tymi samymi pakietami, co gra (kliknięcia slotów, przycisk „umieść recepturę” z recipe booka). Zrzuty ekranu i kursor nie są potrzebne do zwykłej gry.
+
+- **Przedmioty (bez GUI)**: `craft` (rekurencyjnie: kłody → deski → patyki → stół → kilof w jednym wywołaniu; sam stawia/używa stołu; wzór `grid` dla receptur spoza recipe booka), `recipe_info`, `equip` (ręka/druga ręka/zbroja po nazwie), `eat`, `drop_items`
+- **Świat**: `mine` (zbierz N bloków danego typu — Baritone albo prosty fallback; sprawdza, czy masz narzędzie, które da drop; rudy obejmują wariant deepslate), `use_container` (otwórz → weź/włóż → zamknij), `smelt` (piec/wędzarnia/piec hutniczy; sam stawia piec, dobiera paliwo, czeka i odbiera)
 - **Czat/komendy**: `read_chat`, `send_chat`, `run_command`, `mod_chat_command`, `list_client_commands`
-- **Odczyt**: `player_status`, `inventory`, `world_info`, `get_block`, `find_blocks`, `nearby_entities`, `player_list`, `wait`
-- **Ruch**: `look`, `look_at`, `move`, `walk_to`, `jump`, `stop_actions`
-- **Interakcja**: `attack`, `use_item`, `interact_entity`, `mine_block`, `place_block`
-- **Ekwipunek**: `select_slot`, `drop_item`, `swap_hands`, `open_inventory`
-- **GUI**: `read_screen`, `click_widget`, `type_text`, `click_slot`, `close_screen`
+- **Odczyt**: `player_status`, `inventory`, `world_info`, `get_block`, `find_blocks`, `nearby_entities`, `wait`
+- **Ruch**: `look`, `look_at`, `move`, `walk_to`, `stop_actions`
+- **Interakcja**: `attack`, `use_item`, `interact_entity`, `mine_block` (sam dobiera najlepsze narzędzie), `place_block` (z parametrem `item`)
+- **GUI innych modów**: `read_screen`, `click_widget`, `type_text`, `click_slot`, `close_screen`
 - **Klawisze**: `list_keybinds`, `press_keybind`, `press_key`
 - **Mody**: `list_mods`, `mod_info`, `list_config_files`, `read_config_file`, `baritone`
-- **Log**: `read_client_log` · **Wizja**: `screenshot` · **Pamięć**: `remember`, `update_memory`, `forget`, `list_memory`
+- **Log**: `read_client_log` · **Wizja**: `screenshot` (rzadko potrzebny) · **Pamięć**: `remember`, `update_memory`, `forget`, `list_memory`
+
+Każdy wynik akcji kończy się zmianą ekwipunku (`inventory: +3 oak_log, -1 stick`) i linią statusu (`[hp 20/20 food 18 | pos … | holding … | baritone idle]`), więc model nie musi zgadywać, co się stało.
+
+### Crafting — skąd mod zna receptury
+- Receptury z **recipe booka** gracza są układane pakietem recipe booka (serwer sam przenosi składniki).
+- W **singleplayerze** mod zna też receptury jeszcze nieodblokowane (bierze je z serwera zintegrowanego) i układa je zwykłymi kliknięciami — dlatego „kilof z samych kłód” działa od razu.
+- Na **serwerze** nieodblokowane receptury nie są znane klientowi: model dostaje komunikat i może podać wzór `grid` (np. `[["oak_planks","oak_planks"],["oak_planks","oak_planks"]]`).
+
+### Bezpieczeństwo w trakcie pracy
+- Gdy gracz się topi (mało powietrza) albo stoi w lawie, mod przerywa wszystkie akcje AI i Baritone, zamyka GUI i wypływa w górę; model dostaje o tym informację.
+- Komendy, których serwer Ci nie udostępnia (np. `/give` bez cheatów), są odrzucane przed wysłaniem; w stanie gry model widzi „Operator commands: allowed / NOT allowed”.
+- Komunikaty Baritone/Meteor (które omijają zwykłe zdarzenia czatu) są przechwytywane i trafiają do wyników narzędzi, np. „Unable to find any path”.
 
 ### Jak AI „używa innych modów”
 - `run_command` — komendy klienckie modów (Fabric) wykonują się lokalnie, reszta idzie na serwer.
@@ -114,7 +131,7 @@ Nowy profil z poziomu gry (indeks = liczba istniejących profili, domyślnie 6):
 - `press_keybind` — dowolny keybind z menu Sterowanie (vanilla i mody, np. mapa Xaero).
 - `press_key` — symulacja fizycznego klawisza dla modów z własnym systemem skrótów (np. Meteor) i w GUI.
 - `read_screen` / `click_widget` / `type_text` — obsługa ekranów dowolnego moda.
-- `baritone` — bezpośrednio przez API Baritone (bez czatu), z czekaniem na zakończenie.
+- `baritone` — bezpośrednio przez API Baritone (bez czatu), z czekaniem na zakończenie i komunikatami Baritone w wyniku. Uwaga: `goto x y z` znaczy „stań w tym bloku” — mod blokuje cel w pełnym bloku (Baritone by go wykopał).
 
 ## Wyzwalacze automatyczne (domyślnie wyłączone)
 
@@ -125,7 +142,7 @@ AI może reagować bez Twojego pisania: na wiadomości z czatu pasujące do rege
 ```
 /ai <wiadomość>
 /llm stop | status | test | tools | reload | enable | disable | folder
-/llm profiles | profile <nazwa> | model <model>
+/llm profiles | profile <nazwa> | model <model> | key <profil> [klucz]
 /llm perms | perm <kategoria> <off|ask|allow> [world|singleplayer|multiplayer|all]
 /llm memory [world|global] [add <tekst> | remove <id> | clear]
 /llm history show | clear
