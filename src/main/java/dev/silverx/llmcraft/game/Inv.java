@@ -274,6 +274,79 @@ public final class Inv {
     }
 
     /**
+     * Steps that break a workstation an action placed (crafting table, furnace) and collect it again, so it
+     * travels with the player to the next job. Never fails the owner: when it cannot, it notes where it stayed.
+     */
+    public static Script pickUpSteps(Script owner, BlockPos pos, Item item) {
+        Script s = new Script("picking up " + id(item));
+        int[] before = {0};
+        Controller.Task[] sub = {null};
+        boolean[] skipped = {false};
+        s.then("breaking the " + id(item) + " at " + pos.toShortString(), 20 * 15, mc -> {
+            var st = mc.level.getBlockState(pos);
+            if (sub[0] == null) {
+                before[0] = count(item);
+                if (!st.getBlock().asItem().equals(item)) return null;
+                if (!canHarvest(st)) {
+                    owner.note("left the " + id(item) + " at " + pos.toShortString() + " (no tool that picks it up)");
+                    skipped[0] = true;
+                    return null;
+                }
+                bestToolFor(st);
+                sub[0] = Controller.mine(pos);
+            }
+            String r = sub[0].tick(mc);
+            if (r == null) return Script.WAIT;
+            sub[0].onStop();
+            return null;
+        });
+        s.then("collecting the " + id(item), 20 * 6, new Script.Step() {
+            Controller.Task walk;
+            int age;
+
+            @Override
+            public String tick(Minecraft mc) {
+                if (skipped[0] || sub[0] == null) return null;
+                if (count(item) > before[0]) {
+                    if (walk != null) walk.onStop();
+                    owner.note("picked the " + id(item) + " back up (it stays in the inventory for the next time)");
+                    return null;
+                }
+                if (++age > 100) {
+                    if (walk != null) walk.onStop();
+                    owner.note("the " + id(item) + " dropped at " + pos.toShortString() + " but was not picked up");
+                    return null;
+                }
+                if (age > 10 && walk == null) walk = Controller.walkTo(Vec3.atBottomCenterOf(pos), false, 0.3);
+                if (walk != null && walk.tick(mc) != null) walk.onStop();
+                return Script.WAIT;
+            }
+        });
+        return s;
+    }
+
+    /** The item form of the block at a position (furnace, smoker...). */
+    public static Item blockItemAt(BlockPos pos) {
+        return mc().level.getBlockState(pos).getBlock().asItem();
+    }
+
+    /**
+     * Whether right clicking the block does something instead of placing against it (crafting table, chest,
+     * furnace, door, button...). Placement must never target these - it would open a screen or toggle them.
+     */
+    public static boolean opensOnClick(BlockPos pos) {
+        var level = mc().level;
+        var st = level.getBlockState(pos);
+        if (st.hasBlockEntity() || st.getMenuProvider(level, pos) != null) return true;
+        var b = st.getBlock();
+        return b instanceof net.minecraft.world.level.block.DoorBlock || b instanceof net.minecraft.world.level.block.TrapDoorBlock
+                || b instanceof net.minecraft.world.level.block.FenceGateBlock || b instanceof net.minecraft.world.level.block.ButtonBlock
+                || b instanceof net.minecraft.world.level.block.LeverBlock || b instanceof net.minecraft.world.level.block.NoteBlock
+                || b instanceof net.minecraft.world.level.block.RepeaterBlock || b instanceof net.minecraft.world.level.block.ComparatorBlock
+                || b instanceof net.minecraft.world.level.block.CakeBlock || b instanceof net.minecraft.world.level.block.RespawnAnchorBlock;
+    }
+
+    /**
      * Places the given block item next to the player (on solid ground, not inside the player).
      * Returns the position it will appear at, or null when there is no spot or no item.
      */
@@ -292,7 +365,7 @@ public final class Inv {
                     BlockPos pos = feet.offset(dx, dy, dz);
                     if (!level.getBlockState(pos).canBeReplaced() || !level.getFluidState(pos).isEmpty()) continue;
                     BlockPos below = pos.below();
-                    if (!level.getBlockState(below).isFaceSturdy(level, below, Direction.UP)) continue;
+                    if (!level.getBlockState(below).isFaceSturdy(level, below, Direction.UP) || opensOnClick(below)) continue;
                     if (p.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(pos))) continue;
                     double d = p.getEyePosition().distanceTo(Vec3.atCenterOf(pos));
                     if (d > reach - 0.3) continue;

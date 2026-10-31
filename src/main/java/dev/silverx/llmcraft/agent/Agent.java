@@ -125,6 +125,9 @@ public final class Agent {
         ToolContext toolCtx;
         final ChatRequest request = new ChatRequest();
         final List<String> actionLog = new ArrayList<>();
+        String lastTool;
+        int sameToolStreak;
+        int failStreak;
         final StringBuilder shownText = new StringBuilder();
 
         Job(String input, Source source) {
@@ -296,11 +299,33 @@ public final class Agent {
                         }
                         String hazard = Safety.take();
                         if (hazard != null) extra.append('\n').append(hazard);
+                        String nudge = nudge(tool.name, r.error);
+                        if (nudge != null) extra.append("\n[note] ").append(nudge);
                         return r.append(extra.toString());
                     }));
                     });
                 });
             });
+        }
+
+        /**
+         * Small models get stuck probing block by block or retrying a failing method. Repetition is easy to
+         * detect here and a note right inside the result works better than a rule in the system prompt.
+         */
+        String nudge(String toolName, boolean error) {
+            sameToolStreak = toolName.equals(lastTool) ? sameToolStreak + 1 : 1;
+            lastTool = toolName;
+            failStreak = error ? failStreak + 1 : 0;
+            boolean probing = PROBES.contains(toolName);
+            if (probing && sameToolStreak >= 4 && sameToolStreak % 4 == 0) {
+                return toolName + " " + sameToolStreak + " times in a row. Stop probing block by block: decide with what you know, or use one "
+                        + "high-level call (mine finds and collects blocks itself, plan lists everything a goal needs).";
+            }
+            if (failStreak >= 3 && failStreak % 3 == 0) {
+                return failStreak + " failed actions in a row. Change the method instead of retrying (e.g. mine a block instead of making it, "
+                        + "move somewhere with room, get the missing tool/fuel first), or tell the player what blocks you.";
+            }
+            return null;
         }
 
         /** Shrinks old tool results (and drops old screenshots) when the conversation outgrows the context window. */
@@ -366,6 +391,10 @@ public final class Agent {
             return t.equals("NOTHING") || t.equals("NOTHING.") || t.equals("[NOTHING]");
         }
     }
+
+    /** Read-only lookups that a stuck model tends to repeat endlessly. */
+    private static final java.util.Set<String> PROBES = java.util.Set.of("get_block", "find_blocks", "look", "look_at", "screenshot", "player_status", "inventory",
+            "nearby_entities", "world_info", "read_screen");
 
     /** Tool categories whose results get the inventory change and a status line. */
     private static final java.util.Set<Category> ACTING = java.util.EnumSet.of(Category.MOVEMENT, Category.INTERACTION, Category.INVENTORY,

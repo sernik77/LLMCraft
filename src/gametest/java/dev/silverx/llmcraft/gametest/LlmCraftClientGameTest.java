@@ -156,6 +156,7 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
             check(ctx, "craft", "{\"item\":\"wooden_pickaxe\"}", "crafted");
             assertTrue(count(ctx, Items.WOODEN_PICKAXE) == 1, "craft did not produce a wooden pickaxe");
             assertTrue(ctx.computeOnClient(mc -> mc.screen == null && mc.player.containerMenu == mc.player.inventoryMenu), "crafting left a window open");
+            assertTrue(count(ctx, Items.CRAFTING_TABLE) == 1, "craft did not pick the crafting table it placed back up");
 
             // asking for an item you already hold still crafts a new one
             sp.getServer().runCommand("give Player0 minecraft:oak_log 2");
@@ -226,10 +227,50 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
             ctx.waitTicks(5);
             check(ctx, "smelt", "{\"item\":\"raw_iron\"}", "collected 2");
             assertTrue(count(ctx, Items.IRON_INGOT) == 2, "smelt did not give 2 iron ingots");
+            assertTrue(count(ctx, Items.FURNACE) == 1, "smelt did not pick the furnace it placed back up");
+
+            // Too little fuel: load only what it covers, never burn the crafting table, leave nothing in the furnace.
+            for (String junk : new String[]{"oak_planks", "stick", "oak_log", "coal"}) sp.getServer().runCommand("clear Player0 minecraft:" + junk);
+            sp.getServer().runCommand("give Player0 minecraft:raw_iron 3");
+            sp.getServer().runCommand("give Player0 minecraft:oak_planks 1");
+            ctx.waitTicks(5);
+            check(ctx, "smelt", "{\"item\":\"raw_iron\"}", "fuel only covers 1");
+            assertTrue(count(ctx, Items.IRON_INGOT) == 3 && count(ctx, Items.RAW_IRON) == 2, "low-fuel smelt should give 1 ingot and keep 2 raw iron");
+            assertTrue(count(ctx, Items.CRAFTING_TABLE) == 1, "smelt burned the crafting table");
+            sp.getServer().runCommand("clear Player0 minecraft:raw_iron");
+
+            // Item names mine the source block; "diamond" never means diamond_block.
+            assertTrue(ctx.computeOnClient(mc -> {
+                var set = dev.silverx.llmcraft.game.Mining.resolve("diamond");
+                return set.contains(net.minecraft.world.level.block.Blocks.DIAMOND_ORE) && !set.contains(net.minecraft.world.level.block.Blocks.DIAMOND_BLOCK);
+            }), "resolve('diamond') should mean the ores");
+            String diamond = run(ctx, "mine", "{\"block\":\"diamond\",\"count\":3}").text;
+            assertTrue(diamond.contains("iron_pickaxe"), "mine diamond should ask for an iron pickaxe first: " + diamond);
+
+            // Plan: everything down to the blocks, tools before the blocks that need them, logs in one trip.
+            String plan = run(ctx, "plan", "{\"goal\":\"nether_portal\"}").text;
+            assertTrue(plan.contains("mine 10 obsidian") && plan.contains("craft 1 diamond_pickaxe") && plan.contains("flint_and_steel"), "portal plan incomplete: " + plan);
+            assertTrue(plan.indexOf("craft 1 iron_pickaxe") < plan.indexOf("mine 3 diamond") && plan.indexOf("craft 1 diamond_pickaxe") < plan.indexOf("mine 10 obsidian"),
+                    "portal plan out of order: " + plan);
+            assertTrue(plan.split("mine \\d+ log").length <= 2, "logs should be gathered in one step: " + plan);
+            assertTrue(!plan.contains("water_bucket") && !plan.contains("lava_bucket") && !plan.contains("mine 3 diamond  [with diamond_pickaxe"),
+                    "portal plan casts obsidian or uses a pickaxe before making it: " + plan);
+
+            // Placing never clicks a block that opens a screen.
+            int[] q = ctx.computeOnClient(mc -> new int[]{mc.player.getBlockX(), mc.player.getBlockY(), mc.player.getBlockZ()});
+            String tablePos = q[0] + " " + q[1] + " " + (q[2] + 2);
+            sp.getServer().runCommand("setblock " + tablePos + " minecraft:crafting_table");
+            sp.getServer().runCommand("give Player0 minecraft:dirt 4");
+            ctx.waitTicks(10);
+            String onTable = run(ctx, "place_block", "{\"x\":" + q[0] + ",\"y\":" + (q[1] + 1) + ",\"z\":" + (q[2] + 2) + ",\"item\":\"dirt\"}").text;
+            ctx.waitTicks(5);
+            assertTrue(onTable.contains("open/toggle") && ctx.computeOnClient(mc -> mc.screen == null), "place_block against a crafting table: " + onTable);
+            sp.getServer().runCommand("setblock " + tablePos + " minecraft:air");
+            ctx.waitTicks(5);
 
             String obsidian = run(ctx, "mine", "{\"block\":\"obsidian\"}").text;
             assertTrue(obsidian.contains("diamond_pickaxe"), "mine should refuse obsidian without a diamond pickaxe: " + obsidian);
-            check(ctx, "mine", "{\"block\":\"grass_block\",\"count\":2,\"timeout_seconds\":40}", "broke 2/2");
+            check(ctx, "mine", "{\"block\":\"grass_block\",\"count\":2,\"timeout_seconds\":40}", "got 2/2");
             if (dev.silverx.llmcraft.game.BaritoneBridge.available()) {
                 LlmCraft.LOGGER.info("[gametest] Baritone present: testing the Baritone path of mine");
                 check(ctx, "mine", "{\"block\":\"grass_block\",\"count\":3,\"timeout_seconds\":50}", "Baritone said");
@@ -237,6 +278,14 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
                 assertTrue(!dev.silverx.llmcraft.game.BaritoneBridge.isBusy(), "Baritone still running after mine finished");
                 check(ctx, "baritone", "{\"command\":\"goto " + (p1[0] + 3) + " " + p1[1] + " " + p1[2] + "\",\"timeout_seconds\":30}", "baritone 'goto");
             }
+
+            // Portal in one call: frame with filler corners, lit.
+            sp.getServer().runCommand("give Player0 minecraft:obsidian 10");
+            sp.getServer().runCommand("give Player0 minecraft:flint_and_steel 1");
+            sp.getServer().runCommand("give Player0 minecraft:cobblestone 4");
+            ctx.waitTicks(10);
+            check(ctx, "build_nether_portal", "{}", "built and lit");
+            assertTrue(count(ctx, Items.OBSIDIAN) == 0, "portal did not use the 10 obsidian");
 
             ctx.takeScreenshot("llmcraft-tools");
 

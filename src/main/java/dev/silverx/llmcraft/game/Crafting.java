@@ -295,9 +295,10 @@ public final class Crafting {
     public static Script craftTask(Plan plan, Item target, int count) {
         Script s = new Script("crafting " + count + " " + Inv.id(target));
         Map<String, Integer> made = new LinkedHashMap<>();
+        BlockPos[] placedTable = {null};
         for (Job job : plan.jobs) {
             Recipe r = job.recipe;
-            ensureMenu(s, !r.fits2x2());
+            ensureMenu(s, !r.fits2x2(), placedTable);
             for (int i = 0; i < job.times; i++) {
                 if (r.bookId != null) {
                     s.then(() -> mc().gameMode.handlePlaceRecipe(Inv.menu().containerId, r.bookId, false));
@@ -312,6 +313,10 @@ public final class Crafting {
             }
         }
         finish(s, made);
+        // A table this call placed goes back into the inventory, so the next 3x3 craft does not need a new one.
+        s.then(() -> {
+            if (placedTable[0] != null) s.pushNext(Inv.pickUpSteps(s, placedTable[0], Items.CRAFTING_TABLE));
+        });
         return s;
     }
 
@@ -347,13 +352,17 @@ public final class Crafting {
                 cells.add(List.of(it));
             }
         Map<String, Integer> made = new LinkedHashMap<>();
-        ensureMenu(s, h > 2 || w > 2);
+        BlockPos[] placedTable = {null};
+        ensureMenu(s, h > 2 || w > 2, placedTable);
         for (int t = 0; t < times; t++) {
             s.then("placing the pattern", 2, mc -> placeCells(cells, w));
             s.then("waiting for a crafting result (is the pattern a valid recipe?)", 30, mc -> Inv.menu().getSlot(0).getItem().isEmpty() ? Script.WAIT : null);
             takeResult(s, made);
         }
         finish(s, made);
+        s.then(() -> {
+            if (placedTable[0] != null) s.pushNext(Inv.pickUpSteps(s, placedTable[0], Items.CRAFTING_TABLE));
+        });
         return s;
     }
 
@@ -392,7 +401,7 @@ public final class Crafting {
     }
 
     /** Makes sure the right crafting menu is the active one before the next steps run. */
-    private static void ensureMenu(Script s, boolean needsTable) {
+    private static void ensureMenu(Script s, boolean needsTable, BlockPos[] placedOut) {
         s.then(() -> s.guard(null)); // switching menus is expected here
         s.then("preparing the crafting grid", 80, new Script.Step() {
             BlockPos placed;
@@ -424,6 +433,7 @@ public final class Crafting {
                     if (Inv.count(Items.CRAFTING_TABLE) <= 0) return "a 3x3 recipe needs a crafting table and there is none in reach or in the inventory";
                     placed = Inv.placeNearby(Items.CRAFTING_TABLE);
                     if (placed == null) return "no free spot to place a crafting table next to you";
+                    placedOut[0] = placed;
                     s.note("placed a crafting table at " + placed.toShortString());
                     return Script.WAIT;
                 }

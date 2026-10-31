@@ -54,6 +54,12 @@ public final class Mining {
                 if (q.startsWith("deepslate_") && q.endsWith("_ore") && block(q.substring(10)) != null) out.add(block(q.substring(10)));
                 continue;
             }
+            // Item names that come from another block: "diamond" -> diamond ores, not diamond_block.
+            Sources.Mined alias = Sources.alias(q);
+            if (alias != null) {
+                out.addAll(alias.blocks());
+                continue;
+            }
             String singular = q.endsWith("s") ? q.substring(0, q.length() - 1) : q;
             List<Block> suffix = new ArrayList<>();
             List<Block> contains = new ArrayList<>();
@@ -143,7 +149,7 @@ public final class Mining {
      * Without Baritone: walk (straight line) to the nearest exposed matching block, break it with the best
      * tool and step onto it to pick up the drop. Repeats until {@code count} blocks are broken.
      */
-    public static Controller.Task fallbackTask(Set<Block> blocks, int count, int radius) {
+    public static Controller.Task fallbackTask(Set<Block> blocks, int count, int radius, BooleanSupplier enough) {
         int startBroken = broken(blocks);
         return new Controller.Task() {
             BlockPos target;
@@ -154,7 +160,7 @@ public final class Mining {
             @Override
             public String tick(Minecraft mc) {
                 int done = broken(blocks) - startBroken;
-                if (done >= count && phase != 3) return "broke " + done + " block(s)";
+                if ((done >= count || enough != null && enough.getAsBoolean()) && phase != 3) return "broke " + done + " block(s)";
                 var p = mc.player;
                 if (sub != null) {
                     String r = sub.tick(mc);

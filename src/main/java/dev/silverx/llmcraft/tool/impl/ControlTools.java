@@ -200,16 +200,27 @@ public final class ControlTools {
                     BlockPos pos = new BlockPos(Args.integer(a, "x", 0), Args.integer(a, "y", 0), Args.integer(a, "z", 0));
                     var level = mc().level;
                     if (!level.getBlockState(pos).canBeReplaced()) return err("position is occupied by " + level.getBlockState(pos).getBlock().getName().getString());
+                    // Nearest face of a plain neighbour; clicking a crafting table/chest/door would open or toggle it instead.
                     BlockHitResult hit = null;
+                    boolean onlyClickable = false;
+                    double best = Double.MAX_VALUE;
                     for (Direction d : Direction.values()) {
                         BlockPos n = pos.relative(d);
                         if (level.getBlockState(n).canBeReplaced()) continue;
+                        if (Inv.opensOnClick(n)) {
+                            onlyClickable = true;
+                            continue;
+                        }
                         Vec3 face = Vec3.atCenterOf(n).add(Vec3.atLowerCornerOf(d.getOpposite().getUnitVec3i()).scale(0.5));
-                        hit = new BlockHitResult(face, d.getOpposite(), n, false);
-                        break;
+                        double dist = p.getEyePosition().distanceTo(face);
+                        if (dist < best) {
+                            best = dist;
+                            hit = new BlockHitResult(face, d.getOpposite(), n, false);
+                        }
                     }
-                    if (hit == null) return err("no adjacent block to place against");
-                    if (p.getEyePosition().distanceTo(hit.getLocation()) > p.blockInteractionRange()) return err("out of reach, move closer");
+                    if (hit == null) return err(onlyClickable ? "the only neighbours are blocks that open/toggle when clicked (crafting table, chest, door...) - pick another spot"
+                            : "no adjacent block to place against - place a supporting block first (e.g. below it)");
+                    if (best > p.blockInteractionRange()) return err(String.format(java.util.Locale.ROOT, "out of reach (%.1f blocks) - move closer first", best));
                     BlockHitResult finalHit = hit;
                     Controller.lookAt(hit.getLocation());
                     return Controller.run(Controller.settleLook(), 60).thenApply(r -> {

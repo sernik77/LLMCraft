@@ -34,7 +34,7 @@ Wszystko leży w `.minecraft/config/llmcraft/`:
 
 ```
 config.json                 ← cała konfiguracja (edytowalna też z gry)
-global_instructions.md      ← instrukcje obowiązujące wszędzie
+global_instructions.md      ← instrukcje obowiązujące wszędzie (Twoje preferencje; strategia gry jest wbudowana — `agent.includePlaybook`)
 global_memory.json          ← pamięć globalna (np. preferencje gracza)
 worlds/<klucz>/             ← osobno dla każdego świata/serwera
     instructions.md         ← instrukcje tylko dla tego świata/serwera
@@ -102,8 +102,9 @@ Nowy profil z poziomu gry (indeks = liczba istniejących profili, domyślnie 6):
 
 Najważniejsza zasada: **model nie klika po GUI**. Crafting, skrzynie, piece, zakładanie przedmiotów i kopanie to pojedyncze wywołania, które mod wykonuje sam — tymi samymi pakietami, co gra (kliknięcia slotów, przycisk „umieść recepturę” z recipe booka). Zrzuty ekranu i kursor nie są potrzebne do zwykłej gry.
 
-- **Przedmioty (bez GUI)**: `craft` (rekurencyjnie: kłody → deski → patyki → stół → kilof w jednym wywołaniu; sam stawia/używa stołu; wzór `grid` dla receptur spoza recipe booka), `recipe_info`, `equip` (ręka/druga ręka/zbroja po nazwie), `eat`, `drop_items`
-- **Świat**: `mine` (zbierz N bloków danego typu — Baritone albo prosty fallback; sprawdza, czy masz narzędzie, które da drop; rudy obejmują wariant deepslate), `use_container` (otwórz → weź/włóż → zamknij), `smelt` (piec/wędzarnia/piec hutniczy; sam stawia piec, dobiera paliwo, czeka i odbiera)
+- **Planowanie**: `plan` — cały cel rozpisany do bloków do wykopania (np. `nether_portal`, `iron_pickaxe, 2 bucket`, `diamond_tools`): najpierw brakujące kilofy, potem zbieranie hurtem (każdy surowiec raz, z sumą na cały cel), przetapianie z paliwem, crafting; liczy to, co już masz w ekwipunku
+- **Przedmioty (bez GUI)**: `craft` (rekurencyjnie: kłody → deski → patyki → stół → kilof w jednym wywołaniu; sam stawia/używa stołu i zabiera go potem z powrotem; wzór `grid` dla receptur spoza recipe booka), `recipe_info`, `equip` (ręka/druga ręka/zbroja po nazwie), `eat`, `drop_items`
+- **Świat**: `mine` (zbierz N bloków albo przedmiotów — `diamond`, `raw_iron`, `flint`, `obsidian` liczą zdobyte przedmioty; z Baritone szuka w całym świecie i sam eksploruje; sprawdza, czy masz narzędzie, które da drop; rudy obejmują wariant deepslate), `use_container` (otwórz → weź/włóż → zamknij), `smelt` (piec/wędzarnia/piec hutniczy; sam stawia piec i zabiera go potem, dobiera tanie paliwo — nigdy stół czy skrzynię — ładuje tylko tyle, ile paliwo przetopi), `build_nether_portal` (szuka płaskiego miejsca obok, stawia ramę 4×5 z rogami z bruku/ziemi i zapala)
 - **Czat/komendy**: `read_chat`, `send_chat`, `run_command`, `mod_chat_command`, `list_client_commands`
 - **Odczyt**: `player_status`, `inventory`, `world_info`, `get_block`, `find_blocks`, `nearby_entities`, `wait`
 - **Ruch**: `look`, `look_at`, `move`, `walk_to`, `stop_actions`

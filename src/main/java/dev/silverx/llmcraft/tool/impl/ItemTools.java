@@ -7,6 +7,7 @@ import dev.silverx.llmcraft.config.Category;
 import dev.silverx.llmcraft.game.Controller;
 import dev.silverx.llmcraft.game.Crafting;
 import dev.silverx.llmcraft.game.Inv;
+import dev.silverx.llmcraft.game.Planning;
 import dev.silverx.llmcraft.game.Script;
 import dev.silverx.llmcraft.game.Snapshot;
 import dev.silverx.llmcraft.tool.Args;
@@ -68,6 +69,25 @@ public final class ItemTools {
                     Crafting.Plan plan = Crafting.plan(item, count);
                     if (plan.error() != null) return err(plan.error());
                     return Controller.run(Crafting.craftTask(plan, item, count), 20 * 120).thenApply(ItemTools::fromScript);
+                }).build());
+
+        out.add(Tool.builder("plan", Category.PLAYER_READ,
+                        "Plan a goal BEFORE starting it: everything it needs down to the blocks to mine, in order - tools to craft first, totals to mine "
+                                + "(with which pickaxe), what to smelt (and fuel), what to craft; the inventory is counted. Call it once at the start of any goal "
+                                + "with more than one step, then follow it. Accepts several items and named goals: nether_portal, iron_tools, diamond_tools, iron_armor, diamond_armor.")
+                .param("goal", "string", "What you want, e.g. 'nether_portal', 'iron_pickaxe', '10 obsidian, 1 flint_and_steel', '3 bucket'", true)
+                .sync((ctx, a) -> {
+                    if (mc().player == null) return ToolResult.error("not in a world");
+                    List<String> errors = new ArrayList<>();
+                    List<Planning.Goal> goals = Planning.parse(Args.reqStr(a, "goal"), errors);
+                    if (!errors.isEmpty()) return ToolResult.error(String.join("; ", errors) + " (use item ids like iron_pickaxe, or: " + String.join(", ", Planning.COMPOSITES.keySet()) + ")");
+                    if (goals.isEmpty()) return ToolResult.error("say what to plan, e.g. 'iron_pickaxe' or 'nether_portal'");
+                    String text = Planning.plan(goals);
+                    if (Args.reqStr(a, "goal").toLowerCase(Locale.ROOT).contains("portal")) {
+                        text += "\nThen call build_nether_portal (needs 4 more blocks of any kind for the corners, e.g. cobblestone). "
+                                + "Get the obsidian with mine obsidian - do not try to make it from water and lava.";
+                    }
+                    return ToolResult.ok(text);
                 }).build());
 
         out.add(Tool.builder("recipe_info", Category.PLAYER_READ,

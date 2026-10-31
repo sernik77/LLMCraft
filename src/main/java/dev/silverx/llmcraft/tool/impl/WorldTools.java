@@ -7,8 +7,10 @@ import dev.silverx.llmcraft.game.BaritoneBridge;
 import dev.silverx.llmcraft.game.Controller;
 import dev.silverx.llmcraft.game.Inv;
 import dev.silverx.llmcraft.game.Mining;
+import dev.silverx.llmcraft.game.Portal;
 import dev.silverx.llmcraft.game.Script;
 import dev.silverx.llmcraft.game.Snapshot;
+import dev.silverx.llmcraft.game.Sources;
 import dev.silverx.llmcraft.tool.Args;
 import dev.silverx.llmcraft.tool.Tool;
 import dev.silverx.llmcraft.tool.ToolContext;
@@ -34,6 +36,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.IntSupplier;
 
 /** Gathering, containers and furnaces as single calls. */
 public final class WorldTools {
@@ -56,51 +59,80 @@ public final class WorldTools {
 
     public static void register(List<Tool> out) {
         out.add(Tool.builder("mine", Category.INTERACTION,
-                        "Gather blocks: finds, walks to, breaks and picks up `count` blocks of a type (Baritone when installed, otherwise a simple walker). "
-                                + "Checks that you have a tool that drops the block. Ore names include their deepslate variant; 'log' means any log.")
-                .param("block", "string", "Block id(s), e.g. 'oak_log', 'log', 'iron_ore', 'stone', 'coal_ore diamond_ore'", true)
-                .param("count", "integer", "How many blocks to break (default 1)", false)
-                .param("timeout_seconds", "number", "Give up after this long (default 300)", false)
+                        "Get blocks or raw materials: finds, walks to, breaks and picks up `count` of them in one call. With Baritone it searches the whole "
+                                + "loaded and cached world and explores on its own until it finds more - do NOT locate blocks first (no find_blocks/get_block) "
+                                + "and never conclude something does not exist because find_blocks saw none nearby. Accepts item names too: 'diamond', 'raw_iron', "
+                                + "'coal', 'flint', 'cobblestone' count the items you get. Ore names include deepslate variants; 'log' means any log. "
+                                + "Checks that you have a tool that drops the block.")
+                .param("block", "string", "Block or item id(s), e.g. 'oak_log', 'log', 'iron_ore', 'raw_iron', 'diamond', 'obsidian', 'stone', 'coal_ore diamond_ore'", true)
+                .param("count", "integer", "How many blocks (or items, for item names) you want (default 1). Ask for what the whole plan needs plus some spare.", false)
+                .param("timeout_seconds", "number", "Give up after this long (default 120 s + 20 s per block, max 900)", false)
                 .categoryFor((ctx, a) -> useBaritone(ctx) ? Category.BARITONE : Category.INTERACTION)
                 .alsoOfferedUnder(Category.BARITONE)
                 .summary(a -> "mine " + Args.integer(a, "count", 1) + " " + Args.str(a, "block", "?"))
                 .async((ctx, a) -> {
                     var p = mc().player;
                     if (p == null) return err("not in a world");
-                    Set<Block> blocks = Mining.resolve(Args.reqStr(a, "block"));
-                    if (blocks.isEmpty()) return err("unknown block '" + Args.str(a, "block", "") + "'");
+                    String query = Args.reqStr(a, "block");
+                    // "diamond", "raw_iron", "flint": mine the source block, count the item.
+                    Sources.Mined alias = Sources.alias(query);
+                    Item wanted = alias != null ? Inv.item(query.trim()) : null;
+                    Set<Block> blocks = alias != null ? alias.blocks() : Mining.resolve(query);
+                    if (blocks.isEmpty()) return err("unknown block '" + query + "'");
                     int count = Math.max(1, Math.min(2304, Args.integer(a, "count", 1)));
-                    int timeout = (int) (Math.max(5, Args.num(a, "timeout_seconds", 300)) * 20);
+                    int blocksNeeded = wanted == null ? count : (int) Math.ceil(count / alias.perBlock());
+                    int timeout = (int) (Math.max(5, Args.num(a, "timeout_seconds", Math.min(900, 120 + 20 * blocksNeeded))) * 20);
                     List<String> noTool = new ArrayList<>();
                     for (Block b : blocks) {
                         if (!p.isCreative() && !Inv.canHarvest(b.defaultBlockState())) noTool.add(BuiltInRegistries.BLOCK.getKey(b).getPath() + " needs " + Inv.minimalTool(b.defaultBlockState()) + " or better");
                     }
                     if (!noTool.isEmpty() && noTool.size() == blocks.size()) {
-                        return err("no tool in the inventory can harvest it (it would drop nothing): " + String.join("; ", noTool) + ". Craft the tool first.");
+                        return err("no tool in the inventory can harvest it (it would drop nothing): " + String.join("; ", noTool) + ". Craft the tool first (plan shows how).");
                     }
                     int before = Mining.broken(blocks);
+                    int itemsBefore = wanted == null ? 0 : Inv.count(wanted);
+                    IntSupplier got = wanted == null ? () -> Mining.broken(blocks) - before : () -> Inv.count(wanted) - itemsBefore;
                     long started = System.currentTimeMillis();
                     String names = Mining.ids(blocks);
+                    String unit = wanted == null ? "" : " " + Inv.id(wanted);
+                    String note = alias != null && alias.note() != null ? " (" + alias.note() + ")" : "";
                     if (useBaritone(ctx)) {
                         try {
                             if (!BaritoneBridge.execute("mine " + names)) return err("Baritone did not accept 'mine " + names + "'");
                         } catch (Throwable t) {
                             return err("Baritone failed: " + ModTools.rootMessage(t));
                         }
-                        return Controller.run(Mining.baritoneWatch("mining " + names, () -> Mining.broken(blocks) - before >= count, () -> Mining.broken(blocks)), timeout)
+                        return Controller.run(Mining.baritoneWatch("mining " + names, () -> got.getAsInt() >= count, () -> Mining.broken(blocks)), timeout)
                                 .thenCompose(r -> Controller.run(Controller.waitTicks(15), 30).thenApply(x -> r)) // let drops get picked up
                                 .thenApply(r -> {
-                                    int got = Mining.broken(blocks) - before;
-                                    String msg = "broke " + got + "/" + count + " (" + names + "): " + r + Mining.baritoneMessages(started, 4);
-                                    return got >= count ? ToolResult.ok(msg) : ToolResult.error(msg);
+                                    int n = got.getAsInt();
+                                    String msg = "got " + n + "/" + count + unit + " (mined " + (Mining.broken(blocks) - before) + " of " + names + "): " + r + note
+                                            + Mining.baritoneMessages(started, 4);
+                                    if (n >= count) return ToolResult.ok(msg);
+                                    return ToolResult.error(msg + "\nKeep the goal: call mine again for the remaining " + (count - n)
+                                            + " (Baritone explores further each time), or go somewhere else first (deeper / another cave) with baritone.");
                                 });
                     }
-                    return Controller.run(Mining.fallbackTask(blocks, count, ctx.config.context.maxScanRadius), timeout)
+                    return Controller.run(Mining.fallbackTask(blocks, blocksNeeded, ctx.config.context.maxScanRadius, () -> got.getAsInt() >= count), timeout)
                             .thenApply(r -> {
-                                int got = Mining.broken(blocks) - before;
-                                String msg = "broke " + got + "/" + count + ": " + r;
-                                return got >= count ? ToolResult.ok(msg) : ToolResult.error(msg);
+                                int n = got.getAsInt();
+                                String msg = "got " + n + "/" + count + unit + ": " + r + note;
+                                return n >= count ? ToolResult.ok(msg) : ToolResult.error(msg);
                             });
+                }).build());
+
+        out.add(Tool.builder("build_nether_portal", Category.INTERACTION,
+                        "Build and light a nether portal right next to you in one call: finds a flat free 4x5 spot in reach, places the 10 obsidian frame "
+                                + "(corners from cobblestone/dirt or extra obsidian) and lights it with flint_and_steel. Needs 10 obsidian, a flint_and_steel and 4 corner blocks.")
+                .summary(a -> "build a nether portal")
+                .async((ctx, a) -> {
+                    if (mc().player == null) return err("not in a world");
+                    String missing = Portal.missing();
+                    if (missing != null) return err("missing " + missing + ". plan 'nether_portal' lists how to get it.");
+                    Portal.Site site = Portal.findSite();
+                    if (site == null) return err("no flat free 4 wide x 5 tall spot on solid ground within reach here. Move to open flat ground"
+                            + (BaritoneBridge.available() ? " (e.g. baritone 'surface', or goto a flat spot)" : "") + " and call build_nether_portal again.");
+                    return Controller.run(Portal.buildTask(site, Portal.filler()), 20 * 40).thenApply(ItemTools::fromScript);
                 }).build());
 
         out.add(Tool.builder("use_container", Category.INTERACTION,
@@ -154,6 +186,7 @@ public final class WorldTools {
                 .param("count", "integer", "How many (default: all of that item, max 64)", false)
                 .param("fuel", "string", "Fuel item id (default: coal/charcoal, else planks/logs/other fuel)", false)
                 .param("wait", "boolean", "Wait for the output and collect it (default true); false = load the furnace and leave", false)
+                .param("pick_up", "boolean", "Take a furnace this call placed back into the inventory afterwards (default true; needs a pickaxe)", false)
                 .summary(a -> "smelt " + (Args.has(a, "count") ? Args.integer(a, "count", 0) + " " : "") + Args.str(a, "item", "?"))
                 .async((ctx, a) -> {
                     var p = mc().player;
@@ -165,19 +198,24 @@ public final class WorldTools {
                     int have = Inv.count(input);
                     int count = Math.min(64, Math.min(have, Args.has(a, "count") ? Math.max(1, Args.integer(a, "count", 1)) : have));
                     BlockPos furnace = Inv.findInReach(FURNACES);
+                    String fuelQuery = Args.str(a, "fuel", null);
+                    if (furnace == null && fuelQuery == null && pickFuel(input) == null) {
+                        return err("no fuel in the inventory for " + count + " " + Inv.id(input) + " (1 coal or charcoal smelts 8 items, a log or planks 1.5) - get fuel first, e.g. mine coal");
+                    }
                     Script s = new Script("smelting " + count + " " + Inv.id(input));
+                    BlockPos[] placedFurnace = {null};
                     if (furnace == null) {
                         Item block = Inv.count(Items.FURNACE) > 0 ? Items.FURNACE : Inv.count(Items.SMOKER) > 0 ? Items.SMOKER : Inv.count(Items.BLAST_FURNACE) > 0 ? Items.BLAST_FURNACE : null;
                         if (block == null) return err("no furnace in reach or in the inventory (craft one: 8 cobblestone -> craft furnace)");
                         BlockPos placed = Inv.placeNearby(block);
                         if (placed == null) return err("no free spot to place the furnace next to you");
                         s.note("placed a " + Inv.id(block) + " at " + placed.toShortString());
-                        s.until("placing the furnace", 20, () -> !mc().level.getBlockState(placed).isAir());
+                        s.until("placing the furnace", 40, () -> !mc().level.getBlockState(placed).isAir());
                         furnace = placed;
+                        placedFurnace[0] = placed;
                     }
                     BlockPos at = furnace;
                     boolean wait = Args.bool(a, "wait", true);
-                    String fuelQuery = Args.str(a, "fuel", null);
                     int[] loaded = {0};
                     int[] collected = {0};
                     int[] cookTicks = {200};
@@ -189,11 +227,20 @@ public final class WorldTools {
                         ItemStack in = menu.getSlot(0).getItem();
                         if (!in.isEmpty() && !in.is(input)) return "the furnace is already smelting " + Snapshot.stack(in) + "; take it out first";
                         int room = in.isEmpty() ? input.getDefaultMaxStackSize() : in.getMaxStackSize() - in.getCount();
-                        loaded[0] = moveInto(menu, 0, input, Math.min(count, room));
+                        // Only load what the fuel can cook - items left in a cold furnace get forgotten.
+                        int already = in.isEmpty() ? 0 : in.getCount();
+                        int coverable = fuelCoverage(menu, fuelQuery, input, cookTicks[0]) - already;
+                        if (coverable <= 0) return "not enough fuel for " + Inv.id(input) + " (1 coal smelts 8 items, a log or planks 1.5) - get fuel first, e.g. mine coal";
+                        int want = Math.min(Math.min(count, room), coverable);
+                        if (want < count) s.note("fuel only covers " + want + " of " + count);
+                        loaded[0] = moveInto(menu, 0, input, want);
                         if (loaded[0] == 0) return "could not put " + Inv.id(input) + " into the furnace";
-                        int totalItems = loaded[0] + (in.isEmpty() ? 0 : in.getCount());
+                        int totalItems = loaded[0] + already;
                         String fuelErr = addFuel(menu, fuelQuery, input, totalItems * cookTicks[0], cookTicks[0]);
-                        if (fuelErr != null) return fuelErr;
+                        if (fuelErr != null) {
+                            Inv.click(menu, 0, 0, ClickType.QUICK_MOVE); // take the input back
+                            return fuelErr;
+                        }
                         return null;
                     });
                     if (wait) {
@@ -206,7 +253,11 @@ public final class WorldTools {
                             }
                             boolean inputLeft = menu.getSlot(0).hasItem();
                             if (collected[0] >= loaded[0] || !inputLeft && result.isEmpty() && !menu.isLit()) return null;
-                            if (!menu.isLit() && inputLeft && !menu.getSlot(1).hasItem()) return "ran out of fuel with items left";
+                            if (!menu.isLit() && inputLeft && !menu.getSlot(1).hasItem()) {
+                                int left = menu.getSlot(0).getItem().getCount();
+                                Inv.click(menu, 0, 0, ClickType.QUICK_MOVE);
+                                return "ran out of fuel after " + collected[0] + " item(s); took the other " + left + " back - get fuel (coal) and smelt again";
+                            }
                             return Script.WAIT;
                         });
                     }
@@ -216,8 +267,9 @@ public final class WorldTools {
                                 + " (collect with use_container take_all)");
                         p.closeContainer();
                         s.guard(null);
+                        if (wait && placedFurnace[0] != null && Args.bool(a, "pick_up", true)) s.pushNext(Inv.pickUpSteps(s, placedFurnace[0], Inv.blockItemAt(placedFurnace[0])));
                     });
-                    int timeout = wait ? 20 * 20 + count * 220 : 20 * 15;
+                    int timeout = (wait ? 20 * 20 + count * 220 : 20 * 15) + 20 * 25;
                     return Controller.run(s, timeout).thenApply(ItemTools::fromScript);
                 }).build());
     }
@@ -318,6 +370,45 @@ public final class WorldTools {
         return moved;
     }
 
+    /** The fuel smelt would use when none is given: coal-like first, else the longest burning inventory item. Null if there is none. */
+    static Item pickFuel(Item input) {
+        for (Item f : PREFERRED_FUEL) if (f != input && Inv.count(f) > 0) return f;
+        var fuels = mc().level.fuelValues();
+        var inv = mc().player.getInventory();
+        Item fuel = null;
+        int bestBurn = 0;
+        for (int i = 0; i < 36; i++) {
+            ItemStack s = inv.getItem(i);
+            if (s.isEmpty() || s.is(input) || !Sources.isCheapFuel(s.getItem())) continue;
+            int b = fuels.burnDuration(s);
+            if (b > bestBurn) {
+                bestBurn = b;
+                fuel = s.getItem();
+            }
+        }
+        return fuel;
+    }
+
+    /** How many items the fuel in the furnace plus the chosen inventory fuel can cook. */
+    private static int fuelCoverage(AbstractContainerMenu menu, String query, Item input, int cookTicks) {
+        var fuels = mc().level.fuelValues();
+        ItemStack inFuel = menu.getSlot(1).getItem();
+        int burn = inFuel.isEmpty() ? 0 : fuels.burnDuration(inFuel) * inFuel.getCount();
+        Item fuel = !inFuel.isEmpty() ? inFuel.getItem() : null;
+        if (fuel == null && query != null && !query.isBlank()) {
+            int i = Inv.find(query);
+            if (i >= 0) fuel = mc().player.getInventory().getItem(i).getItem();
+        }
+        if (fuel == null) fuel = pickFuel(input);
+        if (fuel != null && fuel != input) {
+            int per = fuels.burnDuration(new ItemStack(fuel));
+            int stackRoom = inFuel.isEmpty() ? fuel.getDefaultMaxStackSize() : inFuel.getMaxStackSize() - inFuel.getCount();
+            burn += per * Math.min(Inv.count(fuel), stackRoom);
+        }
+        if (cookTicks < 200) burn /= 2; // smokers and blast furnaces burn fuel twice as fast
+        return burn / Math.max(1, cookTicks);
+    }
+
     private static String addFuel(AbstractContainerMenu menu, String query, Item input, int burnTicksNeeded, int cookTicks) {
         var fuels = mc().level.fuelValues();
         ItemStack inFuel = menu.getSlot(1).getItem();
@@ -330,20 +421,7 @@ public final class WorldTools {
             if (i < 0) return "no fuel '" + query + "' in the inventory";
             fuel = mc().player.getInventory().getItem(i).getItem();
         } else {
-            for (Item f : PREFERRED_FUEL) if (f != input && Inv.count(f) > 0) { fuel = f; break; }
-            if (fuel == null) {
-                var inv = mc().player.getInventory();
-                int bestBurn = 0;
-                for (int i = 0; i < 36; i++) {
-                    ItemStack s = inv.getItem(i);
-                    if (s.isEmpty() || s.is(input) || s.isDamageableItem() || s.is(Items.LAVA_BUCKET)) continue;
-                    int b = fuels.burnDuration(s);
-                    if (b > bestBurn) {
-                        bestBurn = b;
-                        fuel = s.getItem();
-                    }
-                }
-            }
+            fuel = pickFuel(input);
         }
         if (fuel == null) return "no fuel in the inventory (coal, charcoal, planks, logs, sticks...)";
         int per = fuels.burnDuration(new ItemStack(fuel));

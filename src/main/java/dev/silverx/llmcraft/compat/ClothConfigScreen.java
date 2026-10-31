@@ -95,6 +95,8 @@ public final class ClothConfigScreen {
         agent.addEntry(e.startIntField(t("Max tool calls per step"), c.agent.maxToolCallsPerStep).setMin(1).setDefaultValue(d.agent.maxToolCallsPerStep).setSaveConsumer(v -> c.agent.maxToolCallsPerStep = v).build());
         agent.addEntry(e.startIntField(t("Request timeout (s)"), c.agent.requestTimeoutSeconds).setMin(10).setDefaultValue(d.agent.requestTimeoutSeconds).setSaveConsumer(v -> c.agent.requestTimeoutSeconds = v).build());
         agent.addEntry(e.startIntField(t("History messages kept per world"), c.agent.maxHistoryMessages).setMin(4).setDefaultValue(d.agent.maxHistoryMessages).setSaveConsumer(v -> c.agent.maxHistoryMessages = v).build());
+        agent.addEntry(e.startBooleanToggle(t("Built-in playbook in the prompt"), c.agent.includePlaybook).setDefaultValue(true)
+                .setTooltip(t("Working method, Baritone usage, progression, nether portal and safety tips shipped with the mod")).setSaveConsumer(v -> c.agent.includePlaybook = v).build());
         agent.addEntry(e.startBooleanToggle(t("Summarize old history"), c.agent.summarizeHistory).setDefaultValue(true).setSaveConsumer(v -> c.agent.summarizeHistory = v).build());
         agent.addEntry(e.startBooleanToggle(t("Keep action summaries in history"), c.agent.keepToolSummariesInHistory).setDefaultValue(true).setSaveConsumer(v -> c.agent.keepToolSummariesInHistory = v).build());
         agent.addEntry(e.startIntField(t("Max chars per tool result"), c.agent.maxToolResultChars).setMin(200).setDefaultValue(d.agent.maxToolResultChars).setSaveConsumer(v -> c.agent.maxToolResultChars = v).build());

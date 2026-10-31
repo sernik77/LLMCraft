@@ -55,6 +55,8 @@ public final class LlmConfig {
         public int maxToolResultChars = 4000;
         /** Overall timeout for one request (all steps), seconds. */
         public int requestTimeoutSeconds = 600;
+        /** Include the built-in playbook (working method, Baritone, progression, portal, safety) in the system prompt. */
+        public boolean includePlaybook = true;
         /** Extra text appended to the built-in system prompt (the global instructions file is separate). */
         public String extraSystemPrompt = "";
         /** Answer in this language (empty = same as the player). */

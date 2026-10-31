@@ -71,7 +71,8 @@ public final class InfoTools {
                 }).build());
 
         out.add(Tool.builder("find_blocks", Category.WORLD_READ,
-                        "Find the nearest blocks whose id contains the given text (e.g. 'diamond_ore', 'chest', 'log') within a radius around the player.")
+                        "Find the nearest blocks whose id contains the given text (e.g. 'chest', 'bed', 'water') within a radius around the player. "
+                                + "Only for knowing where something is - to collect blocks call mine directly, it finds them itself (also far away).")
                 .param("block", "string", "Part of the block id, e.g. 'iron_ore' or 'minecraft:oak_log'", true)
                 .param("radius", "integer", "Search radius (default 16, capped by config)", false)
                 .param("max_results", "integer", "Default 10", false)
@@ -96,7 +97,12 @@ public final class InfoTools {
                                 if (id.contains(q)) hits.add(new Hit(m.immutable(), id, Math.sqrt(m.distSqr(c))));
                             }
                     hits.sort(Comparator.comparingDouble(Hit::d));
-                    if (hits.isEmpty()) return ToolResult.ok("no '" + q + "' within " + r + " blocks");
+                    if (hits.isEmpty()) {
+                        String hint = dev.silverx.llmcraft.game.BaritoneBridge.available()
+                                ? " (only loaded blocks this close were checked - that does NOT mean there is none. To get it, call mine with it: Baritone searches its world cache and explores until it finds it)"
+                                : "";
+                        return ToolResult.ok("no '" + q + "' within " + r + " blocks" + hint);
+                    }
                     StringBuilder sb = new StringBuilder(hits.size() + " found (nearest first):\n");
                     for (int i = 0; i < Math.min(max, hits.size()); i++) {
                         Hit h = hits.get(i);
