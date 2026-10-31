@@ -17,7 +17,7 @@ LLMCraft podłącza dowolny model językowy do klienta gry: model czyta czat, ś
 | Mod Menu + Cloth Config | opcjonalne — ekran ustawień |
 | Baritone (także fork Meteora) | opcjonalne — narzędzie `baritone` |
 
-Skopiuj `build/libs/llmcraft-1.1.0.jar` do folderu `mods` (usuń starszą wersję).
+Skopiuj `build/libs/llmcraft-1.2.0.jar` do folderu `mods` (usuń starszą wersję).
 
 ## Szybki start (lokalna Ollama)
 
