@@ -18,6 +18,16 @@ public final class MemoryTools {
     }
 
     public static void register(List<Tool> out) {
+        out.add(Tool.builder("task_notes", Category.PLAYER_READ,
+                        "Your scratchpad for the current request: write what you know and still need (goal, key coordinates, what is left, what failed). "
+                                + "It is shown to you in every following step and replaces the previous notes - keep it short.")
+                .param("text", "string", "The whole notes text (replaces the old notes)", true)
+                .summary(a -> "task_notes: " + Args.str(a, "text", ""))
+                .sync((ctx, a) -> {
+                    String err = dev.silverx.llmcraft.agent.Agent.setNotes(Args.reqStr(a, "text"));
+                    return err == null ? ToolResult.ok("notes saved") : ToolResult.error(err);
+                }).build());
+
         out.add(Tool.builder("remember", Category.MEMORY,
                         "Save a fact to long-term memory. scope 'world' = only this world/server (bases, coordinates, players, goals); 'global' = everywhere (player preferences). Keep facts short and specific.")
                 .param("text", "string", "The fact", true)

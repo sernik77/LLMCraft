@@ -1,14 +1,19 @@
 package dev.silverx.llmcraft.tool.impl;
 
+import dev.silverx.llmcraft.game.BaritoneBridge;
+import dev.silverx.llmcraft.game.Danger;
+import dev.silverx.llmcraft.game.Combat;
+import dev.silverx.llmcraft.agent.Agent;
 import dev.silverx.llmcraft.config.Category;
 import dev.silverx.llmcraft.game.Controller;
+import dev.silverx.llmcraft.game.Script;
+import dev.silverx.llmcraft.game.Inv;
 import dev.silverx.llmcraft.game.Snapshot;
 import dev.silverx.llmcraft.tool.Args;
 import dev.silverx.llmcraft.tool.Tool;
 import dev.silverx.llmcraft.tool.ToolResult;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
@@ -107,13 +112,6 @@ public final class ControlTools {
                             .thenApply(ToolResult::ok);
                 }).build());
 
-        out.add(Tool.builder("jump", Category.MOVEMENT, "Jump once.")
-                .sync((ctx, a) -> {
-                    if (mc().player == null) return ToolResult.error("not in a world");
-                    Controller.hold(mc().options.keyJump, 3);
-                    return ToolResult.ok("jumped");
-                }).build());
-
         out.add(Tool.builder("stop_actions", Category.MOVEMENT, "Immediately stop every running AI movement/action and release all keys.")
                 .sync((ctx, a) -> {
                     Controller.stopAll("requested by AI");
@@ -176,35 +174,140 @@ public final class ControlTools {
                     });
                 }).build());
 
-        out.add(Tool.builder("mine_block", Category.INTERACTION, "Break the block at a position (must be within reach, ~4.5 blocks). Holds left click until it breaks.")
+        out.add(Tool.builder("mine_block", Category.INTERACTION,
+                        "Break one block at a position within reach (~4.5 blocks); the best tool from the inventory is selected automatically. To gather several blocks use mine.")
                 .param("x", "integer", "X", true).param("y", "integer", "Y", true).param("z", "integer", "Z", true)
                 .param("timeout_seconds", "number", "Default 30", false)
                 .async((ctx, a) -> {
                     if (mc().player == null) return err("not in a world");
                     BlockPos pos = new BlockPos(Args.integer(a, "x", 0), Args.integer(a, "y", 0), Args.integer(a, "z", 0));
-                    if (mc().level.getBlockState(pos).isAir()) return err("there is no block at " + pos.toShortString());
-                    return Controller.run(Controller.mine(pos), (int) (Args.num(a, "timeout_seconds", 30) * 20)).thenApply(ToolResult::ok);
+                    var state = mc().level.getBlockState(pos);
+                    if (state.isAir()) return err("there is no block at " + pos.toShortString());
+                    String tool = Inv.bestToolFor(state);
+                    String warn = Inv.canHarvest(state) || mc().player.isCreative() ? ""
+                            : " (warning: it drops nothing without " + Inv.minimalTool(state) + " or better)";
+                    return Controller.run(Controller.mine(pos), (int) (Args.num(a, "timeout_seconds", 30) * 20))
+                            .thenApply(r -> ToolResult.ok(r + " using " + tool + warn));
                 }).build());
 
-        out.add(Tool.builder("place_block", Category.INTERACTION,
-                        "Place the held block at a position (needs an adjacent solid block and must be in reach). Select the block with select_slot first.")
-                .param("x", "integer", "X", true).param("y", "integer", "Y", true).param("z", "integer", "Z", true)
+        out.add(Tool.builder("fight", Category.INTERACTION,
+                        "Fight in one call: equips the best weapon, chases and hits with full attack charge, steps back from creepers, and stops by itself "
+                                + "when health drops to retreat_health. target: 'hostiles' (all monsters around), a mob type ('zombie', 'skeleton', 'cow' for food), "
+                                + "'player:<name>' (only when your player orders it), or entity_id. mode=flee runs away from threats instead.")
+                .param("target", "string", "hostiles (default) | mob type | player:<name>", false)
+                .param("entity_id", "integer", "Exact entity #id from nearby_entities (instead of target)", false)
+                .param("count", "integer", "How many to kill (default: all matching nearby for hostiles, else 1)", false)
+                .enumParam("mode", "attack (default) or flee", false, "attack", "flee")
+                .param("retreat_health", "number", "Stop fighting at or below this health (default from config, 6)", false)
+                .summary(a -> ("flee".equals(Args.str(a, "mode", "attack")) ? "flee from " : "fight ")
+                        + (Args.has(a, "entity_id") ? "#" + Args.integer(a, "entity_id", -1) : Args.str(a, "target", "hostiles")))
                 .async((ctx, a) -> {
                     var p = mc().player;
                     if (p == null) return err("not in a world");
+                    if ("flee".equals(Args.str(a, "mode", "attack"))) {
+                        return Controller.run(new Danger.FleeTask(16), 20 * 10).thenApply(r -> Script.failed(r) ? ToolResult.error(r.replace(Script.FAILED, "")) : ToolResult.ok(r));
+                    }
+                    String target = Args.str(a, "target", "hostiles");
+                    int id = Args.integer(a, "entity_id", -1);
+                    boolean player = target.toLowerCase(java.util.Locale.ROOT).startsWith("player:")
+                            || id >= 0 && mc().level.getEntity(id) instanceof net.minecraft.world.entity.player.Player;
+                    if (player && Agent.currentSource() != Agent.Source.USER) {
+                        return err("attacking a player needs a direct order from your player (not an automatic trigger)");
+                    }
+                    int count = Args.integer(a, "count", target.equalsIgnoreCase("hostiles") && id < 0 ? 99 : 1);
+                    float retreat = (float) Args.num(a, "retreat_health", ctx.config.control.fleeHealth);
+                    var task = new Combat.FightTask(Combat.targets(target, id), Math.max(1, count), retreat, 16);
+                    return Controller.run(task, 20 * 120).thenApply(r -> Script.failed(r) ? ToolResult.error(r.replace(Script.FAILED, "")) : ToolResult.ok(r));
+                }).build());
+
+        out.add(Tool.builder("use_block", Category.INTERACTION,
+                        "Right click (or hit) a block by name or position: open a furnace/chest/crafting table, flip a lever, open a door, press a button, sleep in a bed. "
+                                + "Finds the nearest one in reach; if it is farther, walks there with Baritone first (goto <block>). action=hit gives it one short left click.")
+                .param("block", "string", "Block id or part of it, e.g. 'furnace', 'chest', 'oak_door', 'lever', 'bed' (or give x y z)", false)
+                .param("x", "integer", "X", false).param("y", "integer", "Y", false).param("z", "integer", "Z", false)
+                .enumParam("action", "use (right click, default) or hit (short left click)", false, "use", "hit")
+                .summary(a -> Args.str(a, "action", "use") + " " + (Args.has(a, "block") ? Args.str(a, "block", "") : Args.integer(a, "x", 0) + " " + Args.integer(a, "y", 0) + " " + Args.integer(a, "z", 0)))
+                .async((ctx, a) -> {
+                    var p = mc().player;
+                    if (p == null) return err("not in a world");
+                    boolean hit = "hit".equals(Args.str(a, "action", "use"));
+                    if (Args.has(a, "x") && Args.has(a, "y") && Args.has(a, "z")) {
+                        BlockPos pos = new BlockPos(Args.integer(a, "x", 0), Args.integer(a, "y", 0), Args.integer(a, "z", 0));
+                        if (p.getEyePosition().distanceTo(Vec3.atCenterOf(pos)) > p.blockInteractionRange()) return err("out of reach - walk closer first");
+                        return CompletableFuture.completedFuture(clickBlock(pos, hit));
+                    }
+                    String q = Args.str(a, "block", "");
+                    if (q.isBlank()) return err("give 'block' or x y z");
+                    java.util.Set<String> ids = new java.util.HashSet<>();
+                    for (var b : dev.silverx.llmcraft.game.Mining.resolve(q)) ids.add(net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(b).getPath());
+                    if (ids.isEmpty()) return err("unknown block '" + q + "'");
+                    BlockPos near = Inv.findInReach(ids);
+                    if (near != null) return CompletableFuture.completedFuture(clickBlock(near, hit));
+                    if (!BaritoneBridge.available() || dev.silverx.llmcraft.agent.Permissions.mode(Category.BARITONE, ctx.world) == dev.silverx.llmcraft.config.PermissionMode.OFF) {
+                        return err("no " + q + " within reach (find_blocks shows where one is, then walk_to it)");
+                    }
+                    // Baritone's goto takes one block type: use the type of the nearest matching block that is loaded.
+                    BlockPos far = nearestBlock(ids, Math.min(48, ctx.config.context.maxScanRadius));
+                    if (far == null) return err("no " + q + " within " + Math.min(48, ctx.config.context.maxScanRadius) + " blocks");
+                    String names = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(mc().level.getBlockState(far).getBlock()).getPath();
+                    try {
+                        if (!BaritoneBridge.execute("goto " + names)) return err("Baritone did not accept 'goto " + names + "'");
+                    } catch (Throwable t) {
+                        return err("Baritone failed: " + t.getMessage());
+                    }
+                    return Controller.run(dev.silverx.llmcraft.game.Mining.baritoneWatch("going to a " + q, () -> Inv.findInReach(ids) != null, null), 20 * 90)
+                            .thenApply(r -> {
+                                BlockPos pos = Inv.findInReach(ids);
+                                if (pos == null) return ToolResult.error("could not get to a " + q + ": " + r.replace(Script.FAILED, ""));
+                                return clickBlock(pos, hit);
+                            });
+                }).build());
+
+        out.add(Tool.builder("unstuck", Category.MOVEMENT,
+                        "Get out when you are stuck, in a hole, buried, in water/cobweb or a move keeps failing. Diagnoses the spot and tries fast fixes "
+                                + "(Baritone to an open spot, pillar up, dig out sideways, swim). Gives up after 2 attempts without progress and says why - then re-think the plan.")
+                .summary(a -> "get unstuck")
+                .async((ctx, a) -> {
+                    if (mc().player == null) return err("not in a world");
+                    return dev.silverx.llmcraft.game.Unstuck.run().thenApply(r -> Script.failed(r) ? ToolResult.error(r.replace(Script.FAILED, "")) : ToolResult.ok(r));
+                }).build());
+
+        out.add(Tool.builder("place_block", Category.INTERACTION,
+                        "Place a block at a position (needs an adjacent solid block, must be in reach). Give 'item' to pick the block from the inventory, otherwise the held block is used.")
+                .param("x", "integer", "X", true).param("y", "integer", "Y", true).param("z", "integer", "Z", true)
+                .param("item", "string", "Block item to place, e.g. 'cobblestone' (default: held item)", false)
+                .async((ctx, a) -> {
+                    var p = mc().player;
+                    if (p == null) return err("not in a world");
+                    if (Args.has(a, "item")) {
+                        String e = Inv.toHand(Args.str(a, "item", ""));
+                        if (e != null) return err(e);
+                    }
+                    if (p.getMainHandItem().isEmpty()) return err("nothing in hand to place - pass 'item'");
                     BlockPos pos = new BlockPos(Args.integer(a, "x", 0), Args.integer(a, "y", 0), Args.integer(a, "z", 0));
                     var level = mc().level;
                     if (!level.getBlockState(pos).canBeReplaced()) return err("position is occupied by " + level.getBlockState(pos).getBlock().getName().getString());
+                    // Nearest face of a plain neighbour; clicking a crafting table/chest/door would open or toggle it instead.
                     BlockHitResult hit = null;
+                    boolean onlyClickable = false;
+                    double best = Double.MAX_VALUE;
                     for (Direction d : Direction.values()) {
                         BlockPos n = pos.relative(d);
                         if (level.getBlockState(n).canBeReplaced()) continue;
+                        if (Inv.opensOnClick(n)) {
+                            onlyClickable = true;
+                            continue;
+                        }
                         Vec3 face = Vec3.atCenterOf(n).add(Vec3.atLowerCornerOf(d.getOpposite().getUnitVec3i()).scale(0.5));
-                        hit = new BlockHitResult(face, d.getOpposite(), n, false);
-                        break;
+                        double dist = p.getEyePosition().distanceTo(face);
+                        if (dist < best) {
+                            best = dist;
+                            hit = new BlockHitResult(face, d.getOpposite(), n, false);
+                        }
                     }
-                    if (hit == null) return err("no adjacent block to place against");
-                    if (p.getEyePosition().distanceTo(hit.getLocation()) > p.blockInteractionRange()) return err("out of reach, move closer");
+                    if (hit == null) return err(onlyClickable ? "the only neighbours are blocks that open/toggle when clicked (crafting table, chest, door...) - pick another spot"
+                            : "no adjacent block to place against - place a supporting block first (e.g. below it)");
+                    if (best > p.blockInteractionRange()) return err(String.format(java.util.Locale.ROOT, "out of reach (%.1f blocks) - move closer first", best));
                     BlockHitResult finalHit = hit;
                     Controller.lookAt(hit.getLocation());
                     return Controller.run(Controller.settleLook(), 60).thenApply(r -> {
@@ -215,44 +318,46 @@ public final class ControlTools {
                     });
                 }).build());
 
-        // ---------------- inventory ----------------
-        out.add(Tool.builder("select_slot", Category.INVENTORY, "Select a hotbar slot (0-8).")
-                .param("slot", "integer", "0-8", true)
-                .sync((ctx, a) -> {
-                    var p = mc().player;
-                    if (p == null) return ToolResult.error("not in a world");
-                    int s = Args.integer(a, "slot", -1);
-                    if (s < 0 || s > 8) return ToolResult.error("slot must be 0-8");
-                    p.getInventory().setSelectedSlot(s);
-                    return ToolResult.ok("selected slot " + s + ": " + Snapshot.stack(p.getInventory().getItem(s)));
-                }).build());
+    }
 
-        out.add(Tool.builder("drop_item", Category.INVENTORY, "Drop the held item (one, or the whole stack).")
-                .param("whole_stack", "boolean", "Drop the full stack (default false)", false)
-                .sync((ctx, a) -> {
-                    var p = mc().player;
-                    if (p == null) return ToolResult.error("not in a world");
-                    String what = Snapshot.stack(p.getMainHandItem());
-                    if (p.getMainHandItem().isEmpty()) return ToolResult.error("hand is empty");
-                    boolean all = Args.bool(a, "whole_stack", false);
-                    p.drop(all);
-                    p.swing(InteractionHand.MAIN_HAND);
-                    return ToolResult.ok("dropped " + (all ? what : "one of " + what));
-                }).build());
+    /** Nearest loaded block whose id is in {@code ids}, within {@code r} blocks (nearer layers first), or null. */
+    static BlockPos nearestBlock(java.util.Set<String> ids, int r) {
+        var level = mc().level;
+        BlockPos c = mc().player.blockPosition();
+        BlockPos best = null;
+        double bestD = Double.MAX_VALUE;
+        BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+        for (int x = -r; x <= r; x++)
+            for (int z = -r; z <= r; z++)
+                for (int y = -Math.min(r, 24); y <= Math.min(r, 24); y++) {
+                    double d = x * x + y * y + z * z;
+                    if (d >= bestD) continue;
+                    m.set(c.getX() + x, c.getY() + y, c.getZ() + z);
+                    if (ids.contains(net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(level.getBlockState(m).getBlock()).getPath())) {
+                        bestD = d;
+                        best = m.immutable();
+                    }
+                }
+        return best;
+    }
 
-        out.add(Tool.builder("swap_hands", Category.INVENTORY, "Swap main hand and offhand items.")
-                .sync((ctx, a) -> {
-                    if (mc().player == null) return ToolResult.error("not in a world");
-                    Controller.tap(mc().options.keySwapOffhand);
-                    return ToolResult.ok("swapped");
-                }).build());
-
-        out.add(Tool.builder("open_inventory", Category.INVENTORY, "Open the player's inventory screen (then use read_screen / click_slot).")
-                .sync((ctx, a) -> {
-                    if (mc().player == null) return ToolResult.error("not in a world");
-                    mc().setScreen(new InventoryScreen(mc().player));
-                    return ToolResult.ok("inventory opened");
-                }).build());
+    /** Right click (or one short left click on) a block; reports what changed: a screen that opened or the block's new state. */
+    static ToolResult clickBlock(BlockPos pos, boolean hit) {
+        var mc = mc();
+        var before = mc.level.getBlockState(pos);
+        String name = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(before.getBlock()).getPath();
+        if (hit) {
+            Direction face = Direction.getApproximateNearest(mc.player.getEyePosition().subtract(Vec3.atCenterOf(pos)));
+            Inv.faceInstantly(Vec3.atCenterOf(pos));
+            mc.gameMode.startDestroyBlock(pos, face);
+            mc.gameMode.stopDestroyBlock();
+            mc.player.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+            return ToolResult.ok("hit " + name + " at " + pos.toShortString());
+        }
+        Inv.useBlock(pos);
+        return ToolResult.ok("used " + name + " at " + pos.toShortString() + " (" + (before.getMenuProvider(mc.level, pos) != null
+                ? "its screen opens now - use read_screen/close_screen, or the high-level tools: smelt, use_container, craft"
+                : "check the result in the next state") + ")");
     }
 
     static Vec3 blockCenter(double x, double y, double z) {

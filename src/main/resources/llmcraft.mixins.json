@@ -4,8 +4,10 @@
   "package": "dev.silverx.llmcraft.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "ChatComponentMixin",
     "KeyMappingAccessor",
-    "KeyboardHandlerInvoker"
+    "KeyboardHandlerInvoker",
+    "MinecraftScreenMixin"
   ],
   "injectors": {
     "defaultRequire": 1

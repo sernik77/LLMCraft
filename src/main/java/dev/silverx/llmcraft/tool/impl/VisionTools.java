@@ -20,7 +20,7 @@ public final class VisionTools {
     private VisionTools() {}
 
     public static void register(List<Tool> out) {
-        out.add(Tool.builder("screenshot", Category.VISION, "Capture what is currently on screen (world + HUD + open GUI) and look at it.")
+        out.add(Tool.builder("screenshot", Category.VISION, "Look at the screen as an image. Rarely needed - the game state and tool results are exact text; use it only for visuals text cannot describe (builds, maps, custom mod screens).")
                 .param("max_width", "integer", "Downscale to this width (default 1024, min 256)", false)
                 .available(ctx -> ctx.profile != null && ctx.profile.vision)
                 .async((ctx, a) -> {

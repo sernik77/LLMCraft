@@ -9,7 +9,10 @@ import dev.silverx.llmcraft.config.ConfigManager;
 import dev.silverx.llmcraft.data.Stores;
 import dev.silverx.llmcraft.game.ChatLog;
 import dev.silverx.llmcraft.game.Controller;
+import dev.silverx.llmcraft.game.Mining;
 import dev.silverx.llmcraft.game.Output;
+import dev.silverx.llmcraft.game.Safety;
+import net.fabricmc.fabric.api.event.client.player.ClientPlayerBlockBreakEvents;
 import dev.silverx.llmcraft.tool.ToolRegistry;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -50,6 +53,9 @@ public final class LlmCraft implements ClientModInitializer {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> Commands.register(dispatcher));
 
         ClientTickEvents.START_CLIENT_TICK.register(Controller::tick);
+        ClientTickEvents.START_CLIENT_TICK.register(Safety::tick);
+        ClientTickEvents.START_CLIENT_TICK.register(dev.silverx.llmcraft.game.Danger::tick);
+        ClientPlayerBlockBreakEvents.AFTER.register((level, player, pos, state) -> Mining.onBroken(state));
         ClientTickEvents.END_CLIENT_TICK.register(LlmCraft::endTick);
 
         // Incoming chat: log it for the AI's context and feed the triggers.

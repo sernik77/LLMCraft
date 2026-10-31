@@ -82,6 +82,89 @@ public final class BaritoneBridge {
         }
     }
 
+    /** True while Baritone is computing a path (no movement yet, but it is working). */
+    public static boolean isCalculating() {
+        try {
+            Object behavior = call(primary(), "getPathingBehavior");
+            Object inProgress = call(behavior, "getInProgress");
+            return inProgress instanceof java.util.Optional<?> o && o.isPresent();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** "name1/alias - short description" for every command of the installed Baritone (its own help texts). */
+    public static java.util.List<String> commands() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        try {
+            Object manager = call(primary(), "getCommandManager");
+            Object registry = call(manager, "getRegistry");
+            java.util.Collection<?> entries = (java.util.Collection<?>) registry.getClass().getField("entries").get(registry);
+            for (Object cmd : entries) {
+                if ((Boolean) call(cmd, "hiddenFromHelp")) continue;
+                @SuppressWarnings("unchecked")
+                java.util.List<String> names = (java.util.List<String>) call(cmd, "getNames");
+                out.add(String.join("/", names) + " - " + call(cmd, "getShortDesc"));
+            }
+        } catch (Throwable ignored) {
+        }
+        java.util.Collections.sort(out);
+        return out;
+    }
+
+    /** Long help (usage lines) of one command, or null if there is no such command. */
+    public static String commandHelp(String name) {
+        try {
+            Object manager = call(primary(), "getCommandManager");
+            Method get = findMethod(manager.getClass(), "getCommand", String.class);
+            Object cmd = get.invoke(manager, name.toLowerCase(java.util.Locale.ROOT));
+            if (cmd == null) return null;
+            @SuppressWarnings("unchecked")
+            java.util.List<String> lines = (java.util.List<String>) call(cmd, "getLongDesc");
+            return call(cmd, "getShortDesc") + "\n" + String.join("\n", lines);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static Object settings() throws ReflectiveOperationException {
+        return Class.forName("baritone.api.BaritoneAPI").getMethod("getSettings").invoke(null);
+    }
+
+    /** "name = value (default x)" for the setting, or null when unknown. */
+    public static String setting(String name) {
+        try {
+            Object settings = settings();
+            java.util.Map<?, ?> byName = (java.util.Map<?, ?>) settings.getClass().getField("byLowerName").get(settings);
+            Object s = byName.get(name.toLowerCase(java.util.Locale.ROOT));
+            if (s == null) return null;
+            Object value = s.getClass().getField("value").get(s);
+            Object def = s.getClass().getField("defaultValue").get(s);
+            return call(s, "getName") + " = " + value + (java.util.Objects.equals(value, def) ? "" : " (default " + def + ")");
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** Setting names containing the text (for finding the right one). */
+    public static java.util.List<String> settingNames(String filter) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        try {
+            Object settings = settings();
+            java.util.Map<?, ?> byName = (java.util.Map<?, ?>) settings.getClass().getField("byLowerName").get(settings);
+            String f = filter == null ? "" : filter.toLowerCase(java.util.Locale.ROOT);
+            for (Object k : byName.keySet()) {
+                if (k.toString().contains(f)) {
+                    String line = setting(k.toString());
+                    if (line != null) out.add(line);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        java.util.Collections.sort(out);
+        return out;
+    }
+
     public static void cancel() {
         try {
             Object behavior = call(primary(), "getPathingBehavior");

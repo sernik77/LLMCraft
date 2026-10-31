@@ -19,6 +19,7 @@ import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
+import net.minecraft.world.item.Items;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -72,8 +73,6 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
             double x1 = ctx.computeOnClient(mc -> mc.player.getX());
             assertTrue(Math.abs(x1 - x0) > 0.5, "move forward did not move the player (x " + x0 + " -> " + x1 + ")");
 
-            check(ctx, "select_slot", "{\"slot\":3}", "selected slot 3");
-            check(ctx, "jump", "{}", "jumped");
 
             // Raw key simulation through the KeyboardHandler invoker mixin: 'e' opens the inventory.
             check(ctx, "press_key", "{\"key\":\"e\"}", "pressed");
@@ -134,8 +133,7 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
                 return -1;
             });
             assertTrue(dirtSlot >= 0, "dirt was not given");
-            check(ctx, "select_slot", "{\"slot\":" + dirtSlot + "}", "dirt");
-            check(ctx, "place_block", target, "Dirt");
+            check(ctx, "place_block", target.replace("}", ",\"item\":\"dirt\"}"), "Dirt");
             check(ctx, "walk_to", "{\"x\":" + (p0[0] + 5.5) + ",\"z\":" + (p0[2] + 0.5) + "}", "arrived");
             sp.getServer().runCommand("summon minecraft:pig " + (p0[0] + 7) + " " + p0[1] + " " + p0[2] + " {NoAI:1b}");
             ctx.waitTicks(10);
@@ -147,6 +145,201 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
             float pigHp = ctx.computeOnClient(mc -> ((net.minecraft.world.entity.LivingEntity) mc.level.getEntity(pigId)).getHealth());
             assertTrue(pigHp < 10, "attack did not damage the pig (hp " + pigHp + ")");
             check(ctx, "use_item", "{}", "right clicked");
+
+            // ---- high-level item tools, in survival, without the model touching any GUI ----
+            sp.getServer().runCommand("gamemode survival Player0");
+            sp.getServer().runCommand("clear Player0");
+            sp.getServer().runCommand("recipe take Player0 *"); // nothing unlocked: everything comes from the integrated server
+            sp.getServer().runCommand("give Player0 minecraft:oak_log 4");
+            ctx.waitTicks(10);
+            check(ctx, "recipe_info", "{\"item\":\"wooden_pickaxe\"}", "Can craft now");
+            check(ctx, "craft", "{\"item\":\"wooden_pickaxe\"}", "crafted");
+            assertTrue(count(ctx, Items.WOODEN_PICKAXE) == 1, "craft did not produce a wooden pickaxe");
+            assertTrue(ctx.computeOnClient(mc -> mc.screen == null && mc.player.containerMenu == mc.player.inventoryMenu), "crafting left a window open");
+            assertTrue(count(ctx, Items.CRAFTING_TABLE) == 1, "craft did not pick the crafting table it placed back up");
+
+            // asking for an item you already hold still crafts a new one
+            sp.getServer().runCommand("give Player0 minecraft:oak_log 2");
+            ctx.waitTicks(5);
+            check(ctx, "craft", "{\"item\":\"wooden_pickaxe\"}", "1 wooden_pickaxe");
+            assertTrue(count(ctx, Items.WOODEN_PICKAXE) == 2, "second craft did not add a wooden pickaxe");
+            sp.getServer().runCommand("clear Player0 minecraft:wooden_pickaxe 1");
+
+            // multiplayer-like: only the recipe book, recipes unlock step by step while crafting
+            ctx.runOnClient(mc -> dev.silverx.llmcraft.game.Crafting.useServerRecipes = false);
+            sp.getServer().runCommand("clear Player0");
+            sp.getServer().runCommand("advancement revoke Player0 everything");
+            sp.getServer().runCommand("recipe take Player0 *");
+            sp.getServer().runCommand("give Player0 minecraft:oak_log 3");
+            ctx.waitTicks(10);
+            String locked = run(ctx, "craft", "{\"item\":\"wooden_pickaxe\"}").text;
+            assertTrue(locked.contains("grid"), "a locked recipe should point to the grid fallback: " + locked);
+            check(ctx, "craft", "{\"item\":\"oak_planks\",\"count\":8}", "crafted 8 oak_planks");
+            ctx.waitTicks(5);
+            check(ctx, "craft", "{\"item\":\"stick\"}", "stick");
+            ctx.waitTicks(5);
+            check(ctx, "craft", "{\"item\":\"wooden_pickaxe\"}", "1 wooden_pickaxe");
+            ctx.runOnClient(mc -> dev.silverx.llmcraft.game.Crafting.useServerRecipes = true);
+            sp.getServer().runCommand("recipe take Player0 *");
+
+            // manual pattern
+            sp.getServer().runCommand("give Player0 minecraft:oak_log 1");
+            ctx.waitTicks(5);
+            int planksBefore = count(ctx, Items.OAK_PLANKS);
+            check(ctx, "craft", "{\"item\":\"oak_planks\",\"grid\":[[\"oak_log\"]]}", "crafted 4 oak_planks");
+            assertTrue(count(ctx, Items.OAK_PLANKS) == planksBefore + 4, "grid craft did not add 4 planks");
+
+            // recipe book path (packet placement), 3x3 at the table placed above
+            sp.getServer().runCommand("recipe give Player0 *");
+            sp.getServer().runCommand("give Player0 minecraft:oak_log 2");
+            ctx.waitTicks(10);
+            check(ctx, "craft", "{\"item\":\"chest\"}", "1 chest");
+            assertTrue(count(ctx, Items.CHEST) == 1, "book craft did not produce a chest");
+
+            sp.getServer().runCommand("give Player0 minecraft:iron_helmet 1");
+            sp.getServer().runCommand("give Player0 minecraft:dirt 5");
+            ctx.waitTicks(5);
+            check(ctx, "equip", "{\"item\":\"iron_helmet\"}", "wearing");
+            ctx.waitTicks(3);
+            assertTrue(ctx.computeOnClient(mc -> mc.player.getInventory().getItem(39).is(Items.IRON_HELMET)), "helmet not worn");
+            check(ctx, "equip", "{\"item\":\"wooden_pickaxe\"}", "holding");
+            int dirtBefore = count(ctx, Items.DIRT);
+            check(ctx, "drop_items", "{\"item\":\"dirt\",\"count\":2}", "dropped 2");
+            ctx.waitTicks(5);
+            assertTrue(count(ctx, Items.DIRT) == dirtBefore - 2, "drop_items did not drop 2 dirt");
+
+            int[] p1 = ctx.computeOnClient(mc -> new int[]{mc.player.getBlockX(), mc.player.getBlockY(), mc.player.getBlockZ()});
+            String chestPos = (p1[0] - 2) + " " + p1[1] + " " + p1[2];
+            sp.getServer().runCommand("setblock " + chestPos + " minecraft:chest");
+            sp.getServer().runCommand("item replace block " + chestPos + " container.0 with minecraft:cobblestone 10");
+            ctx.waitTicks(10);
+            String chestArgs = "\"x\":" + (p1[0] - 2) + ",\"y\":" + p1[1] + ",\"z\":" + p1[2];
+            check(ctx, "use_container", "{" + chestArgs + "}", "10 cobblestone");
+            check(ctx, "use_container", "{" + chestArgs + ",\"action\":\"take\",\"item\":\"cobblestone\",\"count\":4}", "took 4 cobblestone");
+            ctx.waitTicks(5);
+            assertTrue(count(ctx, Items.COBBLESTONE) == 4, "use_container take did not move 4 cobblestone");
+            check(ctx, "use_container", "{" + chestArgs + ",\"action\":\"put\",\"item\":\"dirt\"}", " dirt. Container now holds");
+            assertTrue(ctx.computeOnClient(mc -> mc.player.containerMenu == mc.player.inventoryMenu), "use_container left the chest open");
+
+            sp.getServer().runCommand("give Player0 minecraft:furnace 1");
+            sp.getServer().runCommand("give Player0 minecraft:raw_iron 2");
+            sp.getServer().runCommand("give Player0 minecraft:coal 1");
+            ctx.waitTicks(5);
+            check(ctx, "smelt", "{\"item\":\"raw_iron\"}", "collected 2");
+            assertTrue(count(ctx, Items.IRON_INGOT) == 2, "smelt did not give 2 iron ingots");
+            assertTrue(count(ctx, Items.FURNACE) == 1, "smelt did not pick the furnace it placed back up");
+
+            // Too little fuel: load only what it covers, never burn the crafting table, leave nothing in the furnace.
+            for (String junk : new String[]{"oak_planks", "stick", "oak_log", "coal"}) sp.getServer().runCommand("clear Player0 minecraft:" + junk);
+            sp.getServer().runCommand("give Player0 minecraft:raw_iron 3");
+            sp.getServer().runCommand("give Player0 minecraft:oak_planks 1");
+            ctx.waitTicks(5);
+            check(ctx, "smelt", "{\"item\":\"raw_iron\"}", "fuel only covers 1");
+            assertTrue(count(ctx, Items.IRON_INGOT) == 3 && count(ctx, Items.RAW_IRON) == 2, "low-fuel smelt should give 1 ingot and keep 2 raw iron");
+            assertTrue(count(ctx, Items.CRAFTING_TABLE) == 1, "smelt burned the crafting table");
+            sp.getServer().runCommand("clear Player0 minecraft:raw_iron");
+
+            // Item names mine the source block; "diamond" never means diamond_block.
+            assertTrue(ctx.computeOnClient(mc -> {
+                var set = dev.silverx.llmcraft.game.Mining.resolve("diamond");
+                return set.contains(net.minecraft.world.level.block.Blocks.DIAMOND_ORE) && !set.contains(net.minecraft.world.level.block.Blocks.DIAMOND_BLOCK);
+            }), "resolve('diamond') should mean the ores");
+            assertTrue(ctx.computeOnClient(mc -> !dev.silverx.llmcraft.game.Mining.resolve("diamonds").contains(net.minecraft.world.level.block.Blocks.DIAMOND_BLOCK)),
+                    "resolve('diamonds') should mean the ores");
+            String diamond = run(ctx, "mine", "{\"block\":\"diamond\",\"count\":3}").text;
+            assertTrue(diamond.contains("iron_pickaxe"), "mine diamond should ask for an iron pickaxe first: " + diamond);
+
+            // Plan: everything down to the blocks, tools before the blocks that need them, logs in one trip.
+            String plan = run(ctx, "plan", "{\"goal\":\"nether_portal\"}").text;
+            assertTrue(plan.contains("mine 10 obsidian") && plan.contains("craft 1 diamond_pickaxe") && plan.contains("flint_and_steel"), "portal plan incomplete: " + plan);
+            assertTrue(plan.indexOf("craft 1 iron_pickaxe") < plan.indexOf("mine 3 diamond") && plan.indexOf("craft 1 diamond_pickaxe") < plan.indexOf("mine 10 obsidian"),
+                    "portal plan out of order: " + plan);
+            assertTrue(plan.split("mine \\d+ log").length <= 2, "logs should be gathered in one step: " + plan);
+            assertTrue(!plan.contains("water_bucket") && !plan.contains("lava_bucket") && !plan.contains("mine 3 diamond  [with diamond_pickaxe"),
+                    "portal plan casts obsidian or uses a pickaxe before making it: " + plan);
+
+            // Placing never clicks a block that opens a screen.
+            int[] q = ctx.computeOnClient(mc -> new int[]{mc.player.getBlockX(), mc.player.getBlockY(), mc.player.getBlockZ()});
+            String tablePos = q[0] + " " + q[1] + " " + (q[2] + 2);
+            sp.getServer().runCommand("setblock " + tablePos + " minecraft:crafting_table");
+            sp.getServer().runCommand("give Player0 minecraft:dirt 4");
+            ctx.waitTicks(10);
+            String onTable = run(ctx, "place_block", "{\"x\":" + q[0] + ",\"y\":" + (q[1] + 1) + ",\"z\":" + (q[2] + 2) + ",\"item\":\"dirt\"}").text;
+            ctx.waitTicks(5);
+            assertTrue(onTable.contains("open/toggle") && ctx.computeOnClient(mc -> mc.screen == null), "place_block against a crafting table: " + onTable);
+            sp.getServer().runCommand("setblock " + tablePos + " minecraft:air");
+            ctx.waitTicks(5);
+
+            String obsidian = run(ctx, "mine", "{\"block\":\"obsidian\"}").text;
+            assertTrue(obsidian.contains("diamond_pickaxe"), "mine should refuse obsidian without a diamond pickaxe: " + obsidian);
+            check(ctx, "mine", "{\"block\":\"grass_block\",\"count\":2,\"timeout_seconds\":40}", "got 2/2");
+            if (dev.silverx.llmcraft.game.BaritoneBridge.available()) {
+                LlmCraft.LOGGER.info("[gametest] Baritone present: testing the Baritone path of mine");
+                check(ctx, "mine", "{\"block\":\"grass_block\",\"count\":3,\"timeout_seconds\":50}", "Baritone said");
+                ctx.waitTicks(20);
+                assertTrue(!dev.silverx.llmcraft.game.BaritoneBridge.isBusy(), "Baritone still running after mine finished");
+                check(ctx, "baritone", "{\"command\":\"goto " + (p1[0] + 3) + " " + p1[1] + " " + p1[2] + "\",\"timeout_seconds\":30}", "baritone 'goto");
+                check(ctx, "baritone", "{\"command\":\"help\"}", "goto");
+                check(ctx, "baritone", "{\"command\":\"help waypoints\"}", "wp");
+                check(ctx, "baritone", "{\"command\":\"get allowBreak\"}", "allowBreak = ");
+                check(ctx, "baritone", "{\"command\":\"set allowBreak false\"}", "allowBreak = false");
+                check(ctx, "baritone", "{\"command\":\"set allowBreak true\"}", "allowBreak = true");
+                check(ctx, "baritone", "{\"command\":\"waypoints save user testspot\"}", "baritone");
+                // use_block far away: Baritone walks to the nearest one of the matching types (one type per goto)
+                sp.getServer().runCommand("setblock " + (p1[0] + 10) + " " + p1[1] + " " + p1[2] + " minecraft:red_bed[facing=east,part=foot]");
+                sp.getServer().runCommand("setblock " + (p1[0] + 11) + " " + p1[1] + " " + p1[2] + " minecraft:red_bed[facing=east,part=head]");
+                ctx.waitTicks(10);
+                check(ctx, "use_block", "{\"block\":\"bed\"}", "red_bed");
+            }
+
+            // Portal in one call: frame with filler corners, lit.
+            sp.getServer().runCommand("give Player0 minecraft:obsidian 10");
+            sp.getServer().runCommand("give Player0 minecraft:flint_and_steel 1");
+            sp.getServer().runCommand("give Player0 minecraft:cobblestone 4");
+            ctx.waitTicks(10);
+            check(ctx, "build_nether_portal", "{}", "built and lit");
+            assertTrue(count(ctx, Items.OBSIDIAN) == 0, "portal did not use the 10 obsidian");
+
+            // Lava ahead stops walking; a 1x1 shaft is diagnosed and unstuck pillars out of it.
+            int[] hp0 = ctx.computeOnClient(mc -> {
+                int x = mc.player.getBlockX() + 6, z = mc.player.getBlockZ() + 6;
+                return new int[]{x, mc.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, x, z), z};
+            });
+            sp.getServer().runCommand("tp Player0 " + (hp0[0] + 0.5) + " " + hp0[1] + " " + (hp0[2] + 0.5));
+            sp.getServer().runCommand("setblock " + (hp0[0] + 1) + " " + hp0[1] + " " + hp0[2] + " minecraft:lava");
+            ctx.waitTicks(10);
+            String lava = ctx.computeOnClient(mc -> dev.silverx.llmcraft.game.Danger.aheadOf(mc, 1, 0));
+            String where = ctx.computeOnClient(mc -> mc.player.position() + " ground=" + mc.player.onGround());
+            assertTrue(lava != null && lava.contains("lava"), "lava ahead not detected: " + lava + " at " + where);
+            sp.getServer().runCommand("setblock " + (hp0[0] + 1) + " " + hp0[1] + " " + hp0[2] + " minecraft:air");
+            sp.getServer().runCommand("fill " + (hp0[0] - 1) + " " + (hp0[1] - 3) + " " + (hp0[2] - 1) + " " + (hp0[0] + 1) + " " + (hp0[1] - 1) + " " + (hp0[2] + 1) + " minecraft:stone");
+            sp.getServer().runCommand("fill " + hp0[0] + " " + (hp0[1] - 3) + " " + hp0[2] + " " + hp0[0] + " " + (hp0[1] - 1) + " " + hp0[2] + " minecraft:air");
+            sp.getServer().runCommand("tp Player0 " + (hp0[0] + 0.5) + " " + (hp0[1] - 3) + " " + (hp0[2] + 0.5));
+            sp.getServer().runCommand("give Player0 minecraft:cobblestone 16");
+            ctx.waitTicks(20);
+            String diag = ctx.computeOnClient(dev.silverx.llmcraft.game.Stuck::diagnose);
+            assertTrue(diag != null && diag.contains("hole"), "1x1 shaft not diagnosed: " + diag);
+            check(ctx, "unstuck", "{}", "free");
+            assertTrue(ctx.computeOnClient(mc -> mc.player.getY()) >= hp0[1] - 0.1, "unstuck did not get out of the shaft");
+
+            // Fighting: a husk (does not burn in daylight) is killed with the best weapon.
+            sp.getServer().runCommand("difficulty easy");
+            sp.getServer().runCommand("give Player0 minecraft:iron_sword 1");
+            int[] f = ctx.computeOnClient(mc -> new int[]{mc.player.getBlockX(), mc.player.getBlockY(), mc.player.getBlockZ()});
+            sp.getServer().runCommand("summon minecraft:husk " + (f[0] + 3) + " " + f[1] + " " + f[2] + " {NoAI:1b,PersistenceRequired:1b}");
+            ctx.waitTicks(10);
+            check(ctx, "fight", "{\"target\":\"husk\"}", "killed 1");
+            assertTrue(ctx.computeOnClient(mc -> mc.player.getMainHandItem().is(Items.IRON_SWORD)), "fight did not equip the sword");
+            sp.getServer().runCommand("difficulty peaceful");
+
+            // use_block: flip a lever by name.
+            int[] lv = ctx.computeOnClient(mc -> new int[]{mc.player.getBlockX(), mc.player.getBlockY(), mc.player.getBlockZ()});
+            sp.getServer().runCommand("setblock " + (lv[0] + 2) + " " + lv[1] + " " + lv[2] + " minecraft:lever[face=floor]");
+            ctx.waitTicks(10);
+            check(ctx, "use_block", "{\"block\":\"lever\"}", "used lever");
+            ctx.waitTicks(10);
+            assertTrue(ctx.computeOnClient(mc -> mc.level.getBlockState(new net.minecraft.core.BlockPos(lv[0] + 2, lv[1], lv[2]))
+                    .getValue(net.minecraft.world.level.block.LeverBlock.POWERED)), "use_block did not flip the lever");
 
             ctx.takeScreenshot("llmcraft-tools");
 
@@ -202,8 +395,31 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
                 int ctxTokens = ctx.computeOnClient(mc -> ConfigManager.get().activeProfile().contextTokens);
                 LlmCraft.LOGGER.info("[gametest] prompt tokens {} / context {}", promptTokens, ctxTokens);
                 assertTrue(promptTokens > 0 && promptTokens < ctxTokens, "prompt does not fit the context window: " + promptTokens + " / " + ctxTokens);
-                assertTrue(answer.contains("player_status"), "agent did not use player_status: " + answer);
+                // The state is in the work message now, so the model may answer without calling player_status.
                 assertTrue(answer.matches("(?s).*\\b20(\\.0)?\\b.*"), "agent answer lacks the health value 20: " + answer);
+
+                // End to end: "craft a pickaxe" from logs must go through the craft tool, not GUI clicks.
+                sp.getServer().runCommand("clear Player0");
+                sp.getServer().runCommand("recipe take Player0 *");
+                sp.getServer().runCommand("give Player0 minecraft:oak_log 4");
+                ctx.waitTicks(10);
+                ctx.runOnClient(mc -> Agent.submit("Craft me a wooden pickaxe.", Agent.Source.USER));
+                ctx.waitFor(mc -> !Agent.busy(), 20 * 300);
+                String craftHistory = ctx.computeOnClient(mc -> Stores.current().history().getLast().text);
+                LlmCraft.LOGGER.info("[gametest] agent craft: {}", craftHistory);
+                assertTrue(count(ctx, Items.WOODEN_PICKAXE) == 1, "agent did not craft a wooden pickaxe: " + craftHistory);
+                assertTrue(!craftHistory.contains("click_slot") && !craftHistory.contains("press_key"), "agent used GUI tools: " + craftHistory);
+
+                // Step limit: the request ends with a summary instead of an abrupt stop.
+                ctx.runOnClient(mc -> {
+                    ConfigManager.get().agent.maxSteps = 1;
+                    Agent.submit("Call the recipe_info tool for torch, then tell me the recipe.", Agent.Source.USER);
+                });
+                ctx.waitFor(mc -> !Agent.busy(), 20 * 300);
+                String wrapped = ctx.computeOnClient(mc -> Stores.current().history().getLast().text);
+                LlmCraft.LOGGER.info("[gametest] after step limit: {}", wrapped);
+                assertTrue(!wrapped.isBlank() && !wrapped.equals("(no reply)") && wrapped.toLowerCase().contains("torch"), "no summary after the step limit: " + wrapped);
+                ctx.runOnClient(mc -> ConfigManager.get().agent.maxSteps = 32);
                 ctx.takeScreenshot("llmcraft-agent");
             } else {
                 LlmCraft.LOGGER.warn("[gametest] Ollama not reachable, skipping the agent round trip");
@@ -224,6 +440,10 @@ public class LlmCraftClientGameTest implements FabricClientGameTest {
         ToolResult r = f.join();
         LlmCraft.LOGGER.info("[gametest] {} {} -> {}", name, json, r.text.length() > 300 ? r.text.substring(0, 300) + "…" : r.text);
         return r;
+    }
+
+    private static int count(ClientGameTestContext ctx, net.minecraft.world.item.Item item) {
+        return ctx.computeOnClient(mc -> mc.player.getInventory().countItem(item));
     }
 
     private static void check(ClientGameTestContext ctx, String name, String json, String expect) {

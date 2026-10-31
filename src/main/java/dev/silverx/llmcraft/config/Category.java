@@ -9,15 +9,16 @@ public enum Category {
     WORLD_READ("Read the world: blocks, entities, time, weather, biome"),
     PLAYER_READ("Read player status and inventory"),
     SCREEN("Read and interact with open GUIs/containers"),
-    INVENTORY("Change hotbar slot, drop/swap items, open inventory"),
+    INVENTORY("Craft, equip and drop items (directly, no GUI)"),
     MOVEMENT("Move and look around"),
-    INTERACTION("Attack, use items, mine and place blocks"),
+    INTERACTION("Attack, use items, eat, mine and place blocks, use chests and furnaces"),
     KEYBINDS("Press keybinds and raw keys (works with any mod's hotkeys)"),
     MODS("See installed mods, their metadata and config files"),
     BARITONE("Control Baritone pathfinding (if installed)"),
     CLIENT_LOG("Read the client log (logs/latest.log)"),
     VISION("Take screenshots for vision-capable models"),
-    MEMORY("Write long-term memory and notes");
+    MEMORY("Write long-term memory and notes"),
+    SCRIPTS("Run macros and scripts of script mods (JsMacros) - they can do anything a mod can");
 
     public final String description;
 

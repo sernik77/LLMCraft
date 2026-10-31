@@ -7,3 +7,6 @@ pluginManagement {
 }
 
 rootProject.name = 'llmcraft'
+
+// Addon: Meteor Client + JsMacros CE integration (separate jar, depends on LLMCraft)
+include 'bridge'

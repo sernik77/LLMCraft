@@ -36,6 +36,8 @@ public final class Tool {
     public final BiFunction<ToolContext, JsonObject, Boolean> autoAllow;
     /** Further categories under which this tool is offered (when its dynamic category can differ). */
     public final java.util.List<Category> alsoOfferedUnder;
+    /** Calls the player must approve every time, even under ALLOW or "always this session" (e.g. running code). */
+    public final BiFunction<ToolContext, JsonObject, Boolean> alwaysAsk;
 
     private Tool(Builder b) {
         this.name = b.name;
@@ -49,6 +51,7 @@ public final class Tool {
         this.deny = b.deny;
         this.autoAllow = b.autoAllow;
         this.alsoOfferedUnder = java.util.List.copyOf(b.alsoOfferedUnder);
+        this.alwaysAsk = b.alwaysAsk;
     }
 
     public ToolSpec spec() {
@@ -87,6 +90,7 @@ public final class Tool {
         private Function<JsonObject, String> summary;
         private BiFunction<ToolContext, JsonObject, String> deny = (c, a) -> null;
         private BiFunction<ToolContext, JsonObject, Boolean> autoAllow = (c, a) -> false;
+        private BiFunction<ToolContext, JsonObject, Boolean> alwaysAsk = (c, a) -> false;
         private final java.util.List<Category> alsoOfferedUnder = new java.util.ArrayList<>();
 
         private Builder(String name, Category category, String description) {
@@ -102,6 +106,13 @@ public final class Tool {
             p.addProperty("type", type);
             p.addProperty("description", description);
             props.add(name, p);
+            if (isRequired) required.add(name);
+            return this;
+        }
+
+        /** A parameter with a hand-written JSON schema (nested arrays/objects). */
+        public Builder rawParam(String name, JsonObject paramSchema, boolean isRequired) {
+            props.add(name, paramSchema);
             if (isRequired) required.add(name);
             return this;
         }
@@ -169,6 +180,11 @@ public final class Tool {
 
         public Builder autoAllow(BiFunction<ToolContext, JsonObject, Boolean> f) {
             this.autoAllow = f;
+            return this;
+        }
+
+        public Builder alwaysAsk(BiFunction<ToolContext, JsonObject, Boolean> f) {
+            this.alwaysAsk = f;
             return this;
         }
 

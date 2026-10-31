@@ -20,6 +20,8 @@ dependencies {
     mappings loom.officialMojangMappings()
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    // ./gradlew runClientGameTest -PbaritoneJar=/path/baritone.jar[,/path/nested-lib.jar] also tests the Baritone paths
+    if (project.hasProperty('baritoneJar')) modLocalRuntime files(project.property('baritoneJar').toString().split(','))
 
     // Optional: config screen inside Mod Menu (only used when both are installed)
     modCompileOnly("com.terraformersmc:modmenu:${project.modmenu_version}") { transitive = false }

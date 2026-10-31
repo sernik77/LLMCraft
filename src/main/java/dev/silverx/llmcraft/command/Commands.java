@@ -107,6 +107,28 @@ public final class Commands {
                     Output.info("Model of profile '" + p.name + "' set to " + p.model);
                     return 1;
                 })))
+                .then(literal("key").then(argument("profile", StringArgumentType.word()).suggests(PROFILES)
+                        .executes(c -> {
+                            ProviderProfile p = findProfile(StringArgumentType.getString(c, "profile"));
+                            if (p == null) return fail("No such profile. See /llm profiles");
+                            String raw = p.apiKey == null ? "" : p.apiKey.trim();
+                            String state = raw.isEmpty() ? "not set" : raw.startsWith("env:")
+                                    ? "from environment variable " + raw.substring(4) + (p.resolvedApiKey().isBlank() ? " (NOT SET in Minecraft's environment)" : " (ok)")
+                                    : "saved in config.json (…" + raw.substring(Math.max(0, raw.length() - 4)) + ")";
+                            Output.info("API key of '" + p.name + "': " + state + ". Set: /llm key " + p.name + " <key>");
+                            return 1;
+                        })
+                        .then(argument("key", StringArgumentType.greedyString()).executes(c -> {
+                            ProviderProfile p = findProfile(StringArgumentType.getString(c, "profile"));
+                            if (p == null) return fail("No such profile. See /llm profiles");
+                            String key = StringArgumentType.getString(c, "key").trim();
+                            p.apiKey = key;
+                            ConfigManager.save();
+                            Output.info("API key of '" + p.name + "' saved to config.json"
+                                    + (key.startsWith("env:") ? " (read from " + key.substring(4) + ")" : " (…" + key.substring(Math.max(0, key.length() - 4)) + ")")
+                                    + ". The model never sees this file.");
+                            return 1;
+                        }))))
                 .then(literal("perms").executes(c -> perms()))
                 .then(literal("perm").then(argument("category", StringArgumentType.word()).suggests(CATEGORIES)
                         .then(argument("mode", StringArgumentType.word()).suggests(MODES)
@@ -206,7 +228,7 @@ public final class Commands {
         String[] lines = {
                 "/ai <message> — talk to the AI (or type " + ConfigManager.get().chat.promptPrefix + " <message> in chat)",
                 "/llm stop · status · test · tools · reload · enable/disable · folder",
-                "/llm profiles · profile <name> · model <model>",
+                "/llm profiles · profile <name> · model <model> · key <profile> [key]",
                 "/llm perms · perm <category> <off|ask|allow> [world|singleplayer|multiplayer|all]",
                 "/llm memory [world|global] [add <text>|remove <id>|clear]",
                 "/llm history show|clear · instructions · triggers on|off · triggers world on|off|inherit",

@@ -23,6 +23,14 @@ public final class ToolResult {
         return new ToolResult("ERROR: " + text, true);
     }
 
+    /** Same result with extra text appended (images are kept). */
+    public ToolResult append(String extra) {
+        if (extra == null || extra.isEmpty()) return this;
+        ToolResult r = new ToolResult(text + extra, error);
+        r.images.addAll(images);
+        return r;
+    }
+
     public ToolResult withImage(String mediaType, String base64) {
         images.add(new Message.Image(mediaType, base64));
         return this;

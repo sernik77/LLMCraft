@@ -77,10 +77,16 @@ public final class ChatTools {
                     String c = stripSlash(Args.str(a, "command", ""));
                     if (c.isBlank()) return "empty command";
                     String root = c.split("\\s+")[0].toLowerCase(Locale.ROOT);
+                    if (root.startsWith("minecraft:")) root = root.substring(10);
                     if (SELF_COMMANDS.contains(root)) return "the AI cannot run its own control commands";
                     if (!isClientCommand(c)) {
                         for (String pattern : ctx.config.commandDenyPatterns) {
                             if (safeMatches(pattern, c)) return "command blocked by commandDenyPatterns (" + pattern + ")";
+                        }
+                        // The server only sends the commands this player may use; anything else would just fail.
+                        var conn = Minecraft.getInstance().getConnection();
+                        if (conn != null && conn.getCommands().getRoot().getChild(root) == null) {
+                            return "the server does not let you use /" + root + " (no permission or cheats are off) - do it by playing instead";
                         }
                     }
                     if (c.contains("\n") || c.contains("§")) return "invalid characters";
@@ -111,7 +117,12 @@ public final class ChatTools {
                 .available(ctx -> !installedPrefixes(ctx.config).isEmpty())
                 .deny((ctx, a) -> {
                     String t = Args.str(a, "text", "");
-                    for (String p : installedPrefixes(ctx.config)) if (t.startsWith(p) && t.length() > p.length()) return null;
+                    for (String p : installedPrefixes(ctx.config)) {
+                        if (!t.startsWith(p) || t.length() <= p.length()) continue;
+                        // Meteor's .say sends a raw chat packet, past send_chat's limits.
+                        if (t.substring(p.length()).trim().toLowerCase(Locale.ROOT).matches("say(\\s.*)?")) return "use send_chat for public chat messages";
+                        return null;
+                    }
                     return "text must start with one of the installed mod prefixes " + installedPrefixes(ctx.config);
                 })
                 .async((ctx, a) -> {
@@ -140,7 +151,9 @@ public final class ChatTools {
 
     static String stripSlash(String c) {
         c = c == null ? "" : c.trim();
-        return c.startsWith("/") ? c.substring(1) : c;
+        if (c.startsWith("/")) c = c.substring(1);
+        // vanilla has no "minecraft:give" style aliases; plain names work everywhere
+        return c.startsWith("minecraft:") ? c.substring(10) : c;
     }
 
     static boolean safeMatches(String pattern, String text) {
@@ -173,11 +186,14 @@ public final class ChatTools {
     }
 
     /** Waits a moment and returns chat lines that arrived since {@code since}. */
-    static CompletableFuture<String> collectFeedback(long since, long waitMs) {
+    public static CompletableFuture<String> collectFeedback(long since, long waitMs) {
         return CompletableFuture.supplyAsync(() -> {
             StringBuilder sb = new StringBuilder();
-            for (ChatLog.Line l : ChatLog.recent(40, true)) {
-                if (l.time() >= since && l.kind() != ChatLog.Kind.SELF) sb.append(l.format()).append('\n');
+            int n = 0;
+            for (ChatLog.Line l : ChatLog.linesSince(since)) {
+                if (l.kind() == ChatLog.Kind.SELF || l.text().contains("Found stash")) continue;
+                if (++n > 25) break;
+                sb.append(l.format()).append('\n');
             }
             return sb.toString().trim();
         }, CompletableFuture.delayedExecutor(waitMs, TimeUnit.MILLISECONDS));
